@@ -15,7 +15,7 @@ dois estágios com parking-lot, ordenação por entidade e envelope **CloudEvent
 agnóstico de domínio e pronto para interoperar com clients em outras linguagens.
 
 > **Status: em especificação — pré-implementação.**
-> Spec [v0.13](./SPEC.md) fechada para análise; implementação inicia após os spikes de
+> [Especificação](./doc/uhura-spec.md) fechada para análise; implementação inicia após os spikes de
 > fundação (SPEC §26). Nada abaixo está publicado ainda.
 
 ---
@@ -222,7 +222,7 @@ conformidade poliglota do barramento. SPEC §19.6.
 
 ## 📖 Documentação
 
-A [Especificação (SPEC.md)](./SPEC.md) é o documento canônico — inclui fundamentos teóricos,
+A [Especificação (doc/uhura-spec.md)](./doc/uhura-spec.md) é o documento canônico — inclui fundamentos teóricos,
 análise build-vs-buy, invariantes de interoperabilidade, histórico de design review e o
 critério de prontidão pré-implementação.
 

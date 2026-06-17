@@ -9,148 +9,7 @@ O componente é **agnóstico de domínio e de sistema**: não conhece nenhum ser
 nenhuma routing key de aplicação e nenhuma topologia preexistente. Tudo que é específico de
 uma aplicação entra por configuração ou pelos pontos de extensão (§15).
 
-> Status: spec **v0.13** (draft). Alvo: pacote npm `@uhura/bus`.
-
-### Mudanças v0.12 → v0.13 (correção de fronteira: contratos pertencem ao mesh)
-
-1. **Correção conceitual** (supersede a redação v0.11–v0.12): o repositório/pacote de
-   contratos **não é artefato do projeto** — pertence ao **mesh de serviços** que adota o
-   barramento (escopo npm da organização, ex.: `@org/bus-contracts`). O projeto entrega
-   **dois** artefatos (componente `@uhura/bus` + CLI `uhura`); para os contratos, entrega
-   apenas a **estrutura proposta** (`uhura contracts init`) e as ferramentas de manutenção
-   (`bump`, `docs`, linter de compatibilidade). Consequência do princípio §3 — o projeto
-   não conhece domínio.
-2. **§19.6** — novo comando **`uhura contracts init`**: scaffold do repo de contratos do
-   mesh (estrutura de diretórios, CI de governança, `uhura.fleet.json`).
-3. **§14.5.4** — golden files de conformidade movidos para **`conformance/` no repo do
-   projeto** (consumidos pelo CI dos dois repos do projeto): invariante de wire é do
-   protocolo, não do domínio do mesh.
-4. **§27** reescrita com a fronteira projeto × mesh explícita; um broker pode servir
-   múltiplos meshes, cada um com seu repo de contratos.
-
-### Mudanças v0.11 → v0.12 (`uhura bump` — sincronização da frota)
-
-1. **§27.3 (nova)** — modo **`uhura bump`**: a CLI recebe um JSON de configuração com os
-   repositórios dos serviços (`uhura.fleet.json`), coleta os artefatos `.uhura/`
-   (manifesto + schemas, **commitados** por cada serviço no próprio repo), agrega, valida e
-   abre o PR no `uhura-contracts` — a mecânica de sincronização vive em UMA ferramenta,
-   não em N pipelines.
-2. **§11.6/§27.1** — ajuste do fluxo: o build do serviço emite para `.uhura/` no próprio
-   repo (CI verifica frescor); a propagação ao `uhura-contracts` é sempre via `bump`
-   (agendado central, por serviço no CI, ou manual).
-3. **§22.14** — decisão registrada: sincronização **pull-based por artefato commitado** —
-   o bump lê arquivos, nunca builda os serviços (CLI Rust sem dependência de toolchain Node).
-
-### Mudanças v0.10 → v0.11 (ecossistema de 3 repos, fluxo de adoção, política de qualidade)
-
-1. **§27 (nova)** — fluxo de adoção ponta a ponta: três artefatos em três repositórios —
-   `uhura-bus` (npm), `uhura-cli` (binário Rust, **repo próprio**) e **`uhura-contracts`**
-   (componente npm `@uhura/contracts`: fonte única dos JSON Schemas, manifestos, tipos
-   gerados e do catálogo `BUS.md`). Regra central: contrato compartilhado **nunca** se
-   importa do código de outro serviço — sempre de `@uhura/contracts`.
-2. **§14.5 (nova)** — política de cobertura e qualidade para **ambos** os projetos (TS e
-   Rust): unit + integração obrigatórios, diff coverage 100% como gate duro, mutation
-   testing nos módulos core, golden files compartilhados TS↔Rust.
-3. **§22.12–13** — decisões: CLI em repositório próprio; repo de contratos publicado como
-   componente npm (refina a decisão 9).
-
-### Mudanças v0.9 → v0.10 (documentação automática da frota)
-
-1. **§11.6 (nova)** — todo serviço emite no build um **manifesto** (`uhura-manifest.json`)
-   a partir do `contract-registry`: o que publica, consome (com filtros de status/group),
-   operações RPC e commands. Publicado no repo `contracts/` junto com os JSON Schemas.
-2. **§19.6** — novo comando **`uhura docs`**: agrega os manifestos da frota num catálogo
-   Markdown (`BUS.md`) — contratos, produtores, consumidores, grafo de fluxo e **órfãos**
-   (contrato sem consumidor / consumidor sem produtor); `--live` cruza com o broker real.
-3. Manifesto vira a fonte única dos três artefatos de documentação: AsyncAPI (por serviço),
-   `BUS.md` (frota) e codegen futuro — nenhum é escrito à mão.
-
-### Mudanças v0.8 → v0.9 (CLI `uhura`)
-
-1. **§19.6 (nova)** — CLI `uhura`: monitorar contratos/objetos/filas/DLQ, publicar, consumir
-   (tap não-intrusivo), RPC, diff de topologia e diagnóstico de pré-requisitos (`doctor`).
-   Absorve o item de backlog "tooling de admin/replay/inspeção de DLQ".
-2. **§22.11** — decisão registrada: CLI em **Rust**, falando **somente o protocolo** (§12),
-   sem dependência do pacote TS — binário único para máquinas de operação e **prova de
-   conformidade dos invariantes de wire**; o núcleo incuba o futuro `uhura-bus-rs`.
-3. **§21** — roadmap: CLI v0 em paralelo à Fase 2; CLI v1 (DLQ replay) antes do piloto
-   (Fase 3); spike novo **S8** (§26.1) valida o esqueleto Rust contra o broker.
-
-### Mudanças v0.7 → v0.8 (consolidação documental)
-
-1. Documentos intermediários **consolidados nesta spec e removidos do repositório**:
-   `REFINEMENT.md` → §23 (teoria aplicada), §24 (proveniência de padrões) e §26
-   (prontidão pré-código: spikes, runbooks, critério ready-to-code);
-   `REVIEW-PANEL.md` → §25 (histórico do design review em painel).
-2. Sem mudança normativa — apenas reorganização documental.
-
-### Mudanças v0.6 → v0.7 (design review em painel — §25)
-
-1. **§6.1/§12.11** — header `x-uhura-protocol: 1` em toda mensagem: mecanismo de evolução
-   dos invariantes de wire (versão superior à conhecida → warning no consumidor).
-2. **§7.1/§8.5.6** — `maxInFlightPublishes` (default 1.000): teto de publishes aguardando
-   confirm; excedente → `PublishBufferFullError` (margem de memória sob flow control).
-3. **§13/§14.4** — subpath **`@uhura/bus/testing`**: bus in-memory com a mesma API para a
-   aplicação consumidora testar handlers sem broker (gap de DX).
-4. **§8.3** — `shards` default reduzido de 8 para **4** (custo: cada shard é uma quorum
-   queue/grupo Raft; 8+ vira opt-in consciente).
-5. **§11.3** — aposentadoria de contrato em dual-publish agora tem critério verificável
-   (telemetria de consumo zerada por N dias).
-6. **§16** — CDC formalmente movido para **Fase 4 (pós-0.2)** com spec própria; README
-   alinhado (prometia CDC na Fase 2).
-7. **§19.5 (nova)** — orçamento de capacidade do broker (cardinalidade de filas);
-   **§14.3** — postura de supply chain no CI; riscos **R14** (direção AMQP 1.0) e **R15**
-   (cardinalidade de filas em escala de frota); bench suite na Fase 2; decisão §22.10
-   (uniformidade quorum mantida — tier de durabilidade por grupo rejeitado por ora).
-
-### Mudanças v0.5 → v0.6 (assinatura por status + correção do particionamento)
-
-1. **§7.2/§8.2/§8.3** — filtro de status por handler aceita **lista**
-   (`['A','B']` → um binding por status na mesma fila). O filtro é do **assinante**: cada
-   consumer-group escolhe seu recorte (um, lista, todos) sem afetar os demais.
-2. **§8.3** — regra de **dispatch interno** para filas compartilhadas (group): bindings =
-   união dos filtros; mensagem sem handler casado → ack + métrica (nunca retry).
-3. **§8.1/§8.3** — topologia de particionamento **corrigida**: `<prefix>.events` é sempre
-   `topic`; particionamento usa **exchange de hash por consumer-group encadeado**
-   (topic → hash → shards), preservando a rk canônica e o filtro de status no broker.
-4. **§6.1/§12.7** — correção de invariante de wire: o valor de partição viaja no header
-   `x-uhura-partition-key` (`hash-header`), **não** na routing key — hashear a rk canônica
-   colocaria todas as mensagens do mesmo contrato+status num único shard (bug da v0.5).
-
-### Mudanças v0.4 → v0.5 (refinamento pré-implementação)
-
-1. **§2.1 (nova)** — registro de decisão do broker (RabbitMQ × Kafka × NATS × gerenciados) e
-   a consequência "fila ≠ log": o bus **não é event store**; replay histórico e sagas entram
-   formalmente no não-escopo (§4).
-2. **§8 (Conexões)** — duas conexões AMQP (publish/consume) contra deadlock de flow control.
-3. **§8.3** — `singleActiveConsumer` como alternativa de ordenação ao `partitionKey`.
-4. **§8.4** — requests de query levam `expiration` = timeout do RPC.
-5. **§8.5** — republish após timeout de confirm reutiliza o CloudEvent `id` (at-least-once
-   começa no publish; dedup do consumidor cobre).
-6. **§8.7** — fail-closed normativo quando o `IdempotencyStore` está indisponível.
-7. **§8.8 (nova)** — imutabilidade de argumentos de fila e política de migração de topologia.
-8. Riscos R11–R12, métricas de profundidade/idade de fila, novos itens de backlog e novas
-   decisões em aberto (§20–§22).
-9. Análise de refinamento pré-código (checklist de teoria, revisão de mercado por padrão,
-   decisões e spikes) — consolidada nas §23–§26 desde a v0.8.
-
-### Mudanças v0.3 → v0.4
-
-1. **Fundação**: `@golevelup/nestjs-rabbitmq` substitui `amqplib`/`amqp-connection-manager`
-   crus como base do transport — resultado da análise build-vs-buy (§2).
-2. **Nova §2** — análise de alternativas do ecossistema Node/NestJS (registro formal de
-   "por que construir e o que NÃO construir").
-3. **Nova §12** — invariantes de wire para interoperabilidade poliglota (preparação para
-   futuro client Rust sem custo adicional nas fases atuais).
-4. **Nova §19 (Operabilidade)** e **§20 (Riscos e mitigações)** — perfil de design review.
-5. **§16 (CDC)** corrigida: estratégia de captura agora é **por banco** (Postgres = triggers;
-   MSSQL = Change Tracking nativo), eliminando a contradição v0.3 entre §14 e §16.2.
-6. **Side-Wait-Queue** rebaixada de design normativo para item de backlog com questões de
-   design explícitas (§18.1) — estava subespecificada.
-7. Naming unificado: todos os subpacotes/exemplos usam o escopo `@uhura/*`
-   (a v0.3 misturava escopos npm distintos no mesmo documento).
-8. Contagem de retry padronizada em header próprio `x-uhura-attempts` (não em parse de
-   `x-death`) e `x-delivery-limit` explícito em quorum queues (§8.6).
+> Status: especificação em draft (pré-implementação). Alvo: pacote npm `@uhura/bus`.
 
 ---
 
@@ -168,9 +27,6 @@ uma aplicação entra por configuração ou pelos pontos de extensão (§15).
 | Peer deps opcionais | `class-validator`/`class-transformer` (middleware de validação), `ioredis` (store de idempotência) |
 | Deps | `@golevelup/nestjs-rabbitmq` ^9 (traz `amqplib` + `amqp-connection-manager`), `cloudevents` ^10, `uuid` |
 | Dev deps | `jest`, `ts-jest`, `@types/*`, `testcontainers`, `@testcontainers/rabbitmq` |
-
-> Versões verificadas em 2026-06: `@golevelup/nestjs-rabbitmq@9.0.2` (publicado 2026-05,
-> peer NestJS ^11), `cloudevents@10.0.0`, `amqp-connection-manager@5.0.0`.
 
 ### Por que `@golevelup/nestjs-rabbitmq` (e não amqplib cru, nem `@nestjs/microservices`)
 
@@ -205,19 +61,17 @@ de middleware publish+consume; (R8) idempotência plugável; (R9) decorators/DI 
 | Candidato | Estado (06/2026) | Cobre | Veredito |
 |---|---|---|---|
 | `@nestjs/microservices` (RMQ) | ativo (core Nest) | R9 parcial | **Inadequado.** Fila única "inbox" por app com roteamento por `pattern` (anti-padrão que esta spec evita explicitamente, §8.3), envelope proprietário `{pattern, data}` não-interoperável, `emit()` não espera confirm, sem topic exchange, sem mandatory. |
-| `@golevelup/nestjs-rabbitmq` | **v9.0.2, 2026-05, ativo** | R2, R3, R9; R6/R7 parcial | **Escolhido como fundação.** Padrão de facto da comunidade. Cobre o encanamento; não cobre a camada semântica. |
+| `@golevelup/nestjs-rabbitmq` | **ativo — padrão de facto** | R2, R3, R9; R6/R7 parcial | **Escolhido como fundação.** Padrão de facto da comunidade. Cobre o encanamento; não cobre a camada semântica. |
 | `nestjs-rabbitmq` (AlariCode) | manutenção esporádica | R9 parcial | Fila única por serviço (viola R3), RPC proprietário. Inferior ao golevelup em todos os eixos. |
 | `@nestjstools/messaging` | novo (2024-25), autor único, baixa adoção | R1/R7 parcial | Filosoficamente o mais próximo (command/event bus, middlewares), mas imaturo demais para fundação. Referência de API. |
 | `rascal` | maduro, ativo (Onebeyond) | R2, R3; R4 quase (defer in-process, não filas TTL) | Melhor prova de que confirms/retry/parking-lot já foram resolvidos em Node — mas sem NestJS (sem DI/decorators). Plano B como motor. |
 | `moleculer` | manutenção desacelerada | — | Framework completo que substitui os padrões do Nest e impõe topologia própria. Lock-in, descartado. |
-| MassTransit (.NET) / Watermill (Go) | referências | ~todos | Não existe port JS/TS. MassTransit v9 torna-se comercial em 2026. São as referências de design desta spec, não opções. |
+| MassTransit (.NET) / Watermill (Go) | referências | ~todos | Não existe port JS/TS. MassTransit caminha para licenciamento comercial. São as referências de design desta spec, não opções. |
 
-> **Proveniência dos dados desta tabela:** apenas a linha do `@golevelup/nestjs-rabbitmq` foi
-> **verificada online** (npm, 2026-06: v9.0.2, publish 2026-05, peer NestJS ^11). As demais
-> linhas (estado de manutenção de `nestjs-rabbitmq`, `@nestjstools/messaging`, `rascal`,
-> `moleculer` e o licenciamento do MassTransit v9) vêm de levantamento de conhecimento com
-> corte em jan/2026, **sem verificação online nesta revisão** — reconferir antes de citar
-> este quadro fora do contexto do projeto.
+> **Proveniência dos dados desta tabela:** é um levantamento de mercado com corte de
+> conhecimento, **não verificado online** nesta revisão — versões, estado de manutenção
+> e licenciamento dos candidatos devem ser reconferidos antes de citar este quadro fora
+> do contexto do projeto.
 
 **Conclusão:** o ecossistema Node **não tem um "MassTransit"**. O encanamento AMQP existe
 pronto (golevelup); a camada de **semântica + governança de contratos** — R1, R4 (tiers via
@@ -1397,8 +1251,7 @@ política dos demais projetos (§14.5).
 
 ## 22. Decisões registradas
 
-Fechadas em 2026-06 no refinamento pré-implementação (eram as "decisões em aberto" até a
-v0.5; histórico do processo nas §25–§26):
+Fechadas em 2026-06 no refinamento pré-implementação (histórico do processo nas §25–§26):
 
 1. **Registry npm**: GHCR (GitHub Packages, npm privado da org).
 2. **Onde nasce o código**: repo próprio (este), com CI e release independentes desde o
@@ -1552,7 +1405,7 @@ no primeiro ano de produção.
 
 ## 26. Prontidão pré-implementação
 
-As 9 decisões de design estão fechadas (§22). O que separa esta spec do código:
+As decisões de design estão fechadas (§22). O que separa esta spec do código:
 
 ### 26.1 Spikes técnicos — validar antes de assumir
 
@@ -1581,7 +1434,7 @@ Fase 0. S3–S6 paralelizam com a Fase 0 (afetam features das Fases 1–4).
 
 ### 26.3 Critério "ready to code" (Fase 0)
 
-- [x] Decisões D1–D9 fechadas e registradas (§22) — 2026-06
+- [x] Decisões de design fechadas e registradas (§22) — 2026-06
 - [ ] **S1** validado (`basic.return` no golevelup)
 - [ ] **S2** validado (direct reply-to + fail-fast)
 - [ ] **S7** validado (round-trip `cloudevents@10`)
