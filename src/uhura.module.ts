@@ -4,9 +4,12 @@ import { type DynamicModule, Module, type Provider } from '@nestjs/common';
 import { DiscoveryModule } from '@nestjs/core';
 import { Pool } from 'pg';
 
+import { UhuraAmqp } from './amqp';
 import type { UhuraModuleOptions } from './config';
 import { UHURA_OPTIONS, UHURA_PG } from './constants';
 import { UhuraConsumer } from './consumer';
+import { UhuraRpcClient } from './rpc-client';
+import { UhuraRpcServer } from './rpc-server';
 import { UhuraService } from './uhura.service';
 
 @Module({})
@@ -26,7 +29,15 @@ export class UhuraModule {
       module: UhuraModule,
       global: true,
       imports: [DiscoveryModule],
-      providers: [optionsProvider, poolProvider, UhuraService, UhuraConsumer],
+      providers: [
+        optionsProvider,
+        poolProvider,
+        UhuraAmqp,
+        UhuraRpcClient,
+        UhuraRpcServer,
+        UhuraService,
+        UhuraConsumer,
+      ],
       exports: [UhuraService],
     };
   }

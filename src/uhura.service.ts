@@ -8,6 +8,9 @@ import type { Pool } from 'pg';
 import type { UhuraModuleOptions } from './config';
 import { UHURA_OPTIONS, UHURA_PG } from './constants';
 import { newEnvelope } from './envelope';
+import type { CallOptions } from './rpc-client';
+import { UhuraRpcClient } from './rpc-client';
+import type { RpcResult } from './rpc';
 import { insertOutbox } from './storage';
 
 /** Opções de publicação. */
@@ -23,7 +26,18 @@ export class UhuraService {
   constructor(
     @Inject(UHURA_PG) private readonly pool: Pool,
     @Inject(UHURA_OPTIONS) private readonly options: UhuraModuleOptions,
+    private readonly rpc: UhuraRpcClient,
   ) {}
+
+  /** Chama um método RPC (`@UhuraFunction`) e devolve o `RpcResult`. */
+  call<T = unknown>(
+    domain: string,
+    method: string,
+    args: unknown,
+    opts?: CallOptions,
+  ): Promise<RpcResult<T>> {
+    return this.rpc.call<T>(domain, method, args, opts);
+  }
 
   /**
    * Publica um evento de contrato: grava o envelope CloudEvents no outbox.

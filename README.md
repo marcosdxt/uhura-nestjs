@@ -66,14 +66,22 @@ async onChange(entity: UsuarioInfo, ctx: UhuraCdcContext) {}
 
 ## Status
 
-**MVP funcional** — `publish` (grava no outbox) e `@UhuraSubscribe` (consumidor
-com idempotência via Inbox, ack/nack→parking) implementados e **verificados em
-interop bidirecional com o engine Rust** (`uhura-cli`): mensagens trocadas via o
-mesmo outbox/inbox no Postgres e a mesma topologia RabbitMQ, em ambas as direções
-(NestJS↔Rust).
+**MVP funcional** — eventos e RPC, **verificados em interop bidirecional com o
+engine Rust** (`uhura-cli`), via o mesmo outbox/inbox no Postgres e a mesma
+topologia RabbitMQ:
 
-Ainda não implementado: `@UhuraFunction` (RPC), `@UhuraEntityChange` (CDC) e
-mesh-prefixing de domínio. O codegen de contratos vem da CLI (`uhura sync`).
+- `UhuraService.publish(domain, event, data, {partition})` — grava no outbox.
+- `@UhuraSubscribe({domain, events})` — consumidor com idempotência (Inbox),
+  ack/nack→parking.
+- `@UhuraFunction({domain, method})` — endpoint RPC (servidor).
+- `UhuraService.call(domain, method, args)` — cliente RPC → `RpcResult<T>`.
+
+Interop verificado: eventos NestJS↔Rust (ambas as direções) e RPC NestJS↔Rust
+(cliente Rust `uhura call` → servidor `@UhuraFunction`; cliente NestJS → servidor
+NestJS).
+
+Ainda não implementado: `@UhuraEntityChange` (CDC) e mesh-prefixing de domínio.
+O codegen de contratos vem da CLI (`uhura sync`).
 
 ## Layout
 
@@ -82,10 +90,13 @@ src/
   envelope.ts     # CloudEvents 1.0 (nomes idênticos ao SDK Rust)
   transport.ts    # topologia RabbitMQ (espelha o driver Rust)
   storage.ts      # outbox/inbox (mesmas tabelas/colunas)
-  uhura.service.ts# publish() -> outbox
+  uhura.service.ts# publish() -> outbox + call() RPC
   consumer.ts     # discovery de @UhuraSubscribe + consumo idempotente
+  rpc-server.ts   # discovery de @UhuraFunction + respostas RPC
+  rpc-client.ts   # cliente RPC (direct reply-to + correlationId)
+  amqp.ts         # conexão AMQP compartilhada
   uhura.module.ts # UhuraModule.forRoot
-  decorators/     # @UhuraContract, @UhuraSubscribe
+  decorators/     # @UhuraContract, @UhuraSubscribe, @UhuraFunction
 ```
 
 ## Desenvolvimento

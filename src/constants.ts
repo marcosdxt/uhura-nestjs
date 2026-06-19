@@ -11,3 +11,6 @@ export const UHURA_SUBSCRIBE_METADATA = 'uhura:subscribe';
 
 /** Metadado de classe anotada com `@UhuraContract`. */
 export const UHURA_CONTRACT_METADATA = 'uhura:contract';
+
+/** Metadado de método anotado com `@UhuraFunction` (RPC). */
+export const UHURA_FUNCTION_METADATA = 'uhura:function';

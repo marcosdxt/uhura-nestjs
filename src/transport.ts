@@ -20,6 +20,9 @@ export function parkingExchange(domain: string): string {
 export function parkingQueue(domain: string): string {
   return `uhura.${domain}.parking.q`;
 }
+export function rpcQueueName(domain: string): string {
+  return `uhura.${domain}.rpc`;
+}
 
 /** Declara (idempotente) exchange + quorum queue + DLX/parking do domínio. */
 export async function ensureTopology(channel: Channel, domain: string): Promise<void> {

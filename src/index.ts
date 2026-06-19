@@ -11,6 +11,8 @@ export {
 } from './envelope';
 export { UhuraModule } from './uhura.module';
 export { UhuraService, type PublishOptions } from './uhura.service';
+export type { CallOptions } from './rpc-client';
+export type { ResCode, RpcResult, RpcRequest } from './rpc';
 export {
   UhuraContract,
   type UhuraContractOptions,
@@ -19,3 +21,7 @@ export {
   UhuraSubscribe,
   type UhuraSubscribeOptions,
 } from './decorators/subscribe.decorator';
+export {
+  UhuraFunction,
+  type UhuraFunctionOptions,
+} from './decorators/function.decorator';

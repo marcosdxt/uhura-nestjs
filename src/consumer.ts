@@ -8,17 +8,16 @@ import {
   type OnModuleDestroy,
 } from '@nestjs/common';
 import { DiscoveryService, MetadataScanner } from '@nestjs/core';
-import * as amqp from 'amqplib';
+import type * as amqp from 'amqplib';
 import type { Pool } from 'pg';
 
+import { UhuraAmqp } from './amqp';
 import type { UhuraModuleOptions } from './config';
 import { UHURA_OPTIONS, UHURA_PG, UHURA_SUBSCRIBE_METADATA } from './constants';
 import type { UhuraSubscribeOptions } from './decorators/subscribe.decorator';
 import type { Envelope } from './envelope';
 import { markProcessed } from './storage';
 import { ensureTopology, queueName } from './transport';
-
-type AmqpConnection = Awaited<ReturnType<typeof amqp.connect>>;
 
 interface Handler {
   options: UhuraSubscribeOptions;
@@ -30,12 +29,12 @@ interface Handler {
 @Injectable()
 export class UhuraConsumer implements OnApplicationBootstrap, OnModuleDestroy {
   private readonly logger = new Logger('Uhura');
-  private connection?: AmqpConnection;
   private channel?: amqp.Channel;
 
   constructor(
     private readonly discovery: DiscoveryService,
     private readonly scanner: MetadataScanner,
+    private readonly amqp: UhuraAmqp,
     @Inject(UHURA_OPTIONS) private readonly options: UhuraModuleOptions,
     @Inject(UHURA_PG) private readonly pool: Pool,
   ) {}
@@ -46,8 +45,7 @@ export class UhuraConsumer implements OnApplicationBootstrap, OnModuleDestroy {
       return;
     }
 
-    this.connection = await amqp.connect(this.options.amqpUrl);
-    this.channel = await this.connection.createChannel();
+    this.channel = await this.amqp.createChannel();
     await this.channel.prefetch(this.options.prefetch ?? 16);
 
     const byDomain = new Map<string, Handler[]>();
@@ -140,6 +138,5 @@ export class UhuraConsumer implements OnApplicationBootstrap, OnModuleDestroy {
 
   async onModuleDestroy(): Promise<void> {
     await this.channel?.close().catch(() => undefined);
-    await this.connection?.close().catch(() => undefined);
   }
 }
