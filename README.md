@@ -75,13 +75,15 @@ topologia RabbitMQ:
   ack/nack→parking.
 - `@UhuraFunction({domain, method})` — endpoint RPC (servidor).
 - `UhuraService.call(domain, method, args)` — cliente RPC → `RpcResult<T>`.
+- `@UhuraEntityChange({domain, events})` — handler de CDC (eventos `inserted`/
+  `updated`/`removed` gerados pelos triggers via `uhura db sync`).
 
 Interop verificado: eventos NestJS↔Rust (ambas as direções) e RPC NestJS↔Rust
 (cliente Rust `uhura call` → servidor `@UhuraFunction`; cliente NestJS → servidor
 NestJS).
 
-Ainda não implementado: `@UhuraEntityChange` (CDC) e mesh-prefixing de domínio.
-O codegen de contratos vem da CLI (`uhura sync`).
+Ainda não implementado: mesh-prefixing de domínio. O codegen de contratos vem
+da CLI (`uhura sync`).
 
 ## Layout
 

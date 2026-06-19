@@ -25,3 +25,7 @@ export {
   UhuraFunction,
   type UhuraFunctionOptions,
 } from './decorators/function.decorator';
+export {
+  UhuraEntityChange,
+  type UhuraEntityChangeOptions,
+} from './decorators/entity-change.decorator';
