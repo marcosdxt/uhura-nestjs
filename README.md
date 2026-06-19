@@ -66,12 +66,32 @@ async onChange(entity: UsuarioInfo, ctx: UhuraCdcContext) {}
 
 ## Status
 
-🚧 Em implementação a partir da `SPEC.md`. Veja a spec para arquitetura, topologia e garantias.
+**MVP funcional** — `publish` (grava no outbox) e `@UhuraSubscribe` (consumidor
+com idempotência via Inbox, ack/nack→parking) implementados e **verificados em
+interop bidirecional com o engine Rust** (`uhura-cli`): mensagens trocadas via o
+mesmo outbox/inbox no Postgres e a mesma topologia RabbitMQ, em ambas as direções
+(NestJS↔Rust).
+
+Ainda não implementado: `@UhuraFunction` (RPC), `@UhuraEntityChange` (CDC) e
+mesh-prefixing de domínio. O codegen de contratos vem da CLI (`uhura sync`).
+
+## Layout
+
+```
+src/
+  envelope.ts     # CloudEvents 1.0 (nomes idênticos ao SDK Rust)
+  transport.ts    # topologia RabbitMQ (espelha o driver Rust)
+  storage.ts      # outbox/inbox (mesmas tabelas/colunas)
+  uhura.service.ts# publish() -> outbox
+  consumer.ts     # discovery de @UhuraSubscribe + consumo idempotente
+  uhura.module.ts # UhuraModule.forRoot
+  decorators/     # @UhuraContract, @UhuraSubscribe
+```
 
 ## Desenvolvimento
 
 ```bash
 npm install
-npm test            # unitários
-npm run test:int    # integração (Testcontainers: Postgres + RabbitMQ)
+npm run typecheck
+npm run build
 ```
