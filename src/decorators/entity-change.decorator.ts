@@ -1,8 +1,11 @@
 //! `@UhuraEntityChange` — handler de eventos de CDC de uma entidade.
 //
 // CDC flui pelo mesmo caminho de eventos (outbox → station → fila do domínio),
-// então reutiliza o metadado de assinatura; o handler recebe `(data, envelope)`
-// com `envelope.facttype = 'SNAPSHOT'` e `source = 'pg:<tabela>'`.
+// então reutiliza o metadado de assinatura; o handler recebe `(data, envelope, tx?)`
+// com `envelope.facttype = 'SNAPSHOT'` e `source = 'pg:<tabela>'`. O 3º
+// parâmetro opcional é o `PoolClient` da transação do *transactional inbox*
+// (dedup + handler na mesma transação; ack só após COMMIT) — use-o para os
+// writes do handler serem atômicos com o dedup.
 
 import { UHURA_SUBSCRIBE_METADATA } from '../constants';
 
