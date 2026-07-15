@@ -114,20 +114,39 @@ export class UhuraConsumer implements OnApplicationBootstrap, OnModuleDestroy {
         return;
       }
 
-      // Idempotência: dedup por envelope.id antes de invocar handlers.
-      const isNew = await markProcessed(
-        this.pool,
-        envelope.id,
-        domain,
-        envelope.partitionkey ?? null,
-      );
-      if (isNew) {
-        for (const handler of matched) {
-          await handler.instance[handler.methodName](envelope.data, envelope);
+      // Transactional inbox (SPEC §12.1): dedup + handlers na MESMA transação.
+      // Se um handler falhar, o ROLLBACK desfaz a marca do inbox e a redelivery
+      // reexecuta do zero; poison messages genuínas atingem o x-delivery-limit
+      // e vão ao parking. Handlers recebem o client transacional como 3º
+      // argumento para que seus writes Postgres sejam atômicos com o dedup.
+      const client = await this.pool.connect();
+      try {
+        await client.query('BEGIN');
+        const isNew = await markProcessed(
+          client,
+          envelope.id,
+          domain,
+          envelope.partitionkey ?? null,
+        );
+        if (isNew) {
+          for (const handler of matched) {
+            await handler.instance[handler.methodName](
+              envelope.data,
+              envelope,
+              client,
+            );
+          }
+        } else if (this.options.debug) {
+          this.logger.debug(`duplicado ignorado ${envelope.id}`);
         }
-      } else if (this.options.debug) {
-        this.logger.debug(`duplicado ignorado ${envelope.id}`);
+        await client.query('COMMIT');
+      } catch (err) {
+        await client.query('ROLLBACK').catch(() => undefined);
+        throw err;
+      } finally {
+        client.release();
       }
+      // Multi-pod: ack SOMENTE após o COMMIT — nunca antes.
       channel.ack(msg);
     } catch (err) {
       this.logger.error(`falha ao processar: ${String(err)}`);

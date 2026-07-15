@@ -61,8 +61,33 @@ async onChange(entity: UsuarioInfo, ctx: UhuraCdcContext) {}
 ## Guarantees
 
 - **CloudEvents 1.0** envelope + **W3C/OpenTelemetry** *trace context* propagated across every hop.
-- **At-least-once delivery + idempotent Inbox = effectively-once** (not *exactly-once*).
+- **At-least-once delivery + transactional Inbox = effectively-once** (not *exactly-once*).
 - Per-partition ordering via a *consistent-hash exchange* + *Single Active Consumer*.
+
+### Delivery semantics (transactional inbox)
+
+The consumer wraps dedup and handler execution in a **single Postgres
+transaction** (SPEC §12.1): the `uhura_inbox` insert (`ON CONFLICT DO NOTHING`)
+and your handlers run on the same transactional client, and the AMQP `ack` is
+sent **only after COMMIT**. If a handler throws, the transaction is rolled
+back (the inbox mark is undone), the message is `nack`ed with requeue and is
+redelivered cleanly; genuine poison messages hit `x-delivery-limit` and land
+in the parking queue.
+
+Handlers receive the transactional `PoolClient` as an optional 3rd argument:
+
+```ts
+@UhuraSubscribe({ domain: 'uhura.acme.usuario.info', events: ['started'] })
+async handle(entity: UsuarioInfo, envelope: Envelope, tx?: PoolClient) {
+  // Use `tx` for your Postgres writes so they commit atomically with the
+  // dedup mark — this is what makes "effectively-once" actually hold.
+  await tx!.query('INSERT INTO ...', [...]);
+}
+```
+
+Two-argument handlers `(data, envelope)` keep working unchanged, but writes
+made outside `tx` (another connection, another database, HTTP calls) are not
+covered by the transaction and must be idempotent on their own.
 
 ## Status
 
