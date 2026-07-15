@@ -1,7 +1,10 @@
 {
-  "name": "@marcosaquino/uhura-nestjs",
+  "name": "@modulocker/uhura-nestjs",
   "version": "0.1.0",
   "description": "SDK NestJS do Uhura message bus (decorators contract-first sobre RabbitMQ + PostgreSQL)",
+  "publishConfig": {
+    "registry": "https://verdaccio.modulocker.app.br"
+  },
   "license": "MIT",
   "repository": {
     "type": "git",
