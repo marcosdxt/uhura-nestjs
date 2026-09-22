@@ -21,8 +21,24 @@ export async function insertOutbox(
 }
 
 /**
+ * O envelope já foi processado com sucesso antes?
+ *
+ * Consulta e marcação são separadas de propósito: marcar antes de o handler
+ * cumprir transforma a primeira falha em perda — o nack reentrega, a linha do
+ * inbox já existe, e a reentrega é descartada como duplicata, sem retry e sem
+ * parking. Ver `markProcessed`.
+ */
+export async function wasProcessed(pool: Pool, envelopeId: string): Promise<boolean> {
+  const res = await pool.query('SELECT 1 FROM uhura_inbox WHERE envelope_id = $1', [envelopeId]);
+  return (res.rowCount ?? 0) > 0;
+}
+
+/**
  * Marca o envelope como processado no `uhura_inbox`.
- * Retorna `true` se é novo (deve processar) e `false` se duplicado.
+ * Retorna `true` se é novo e `false` se outro consumidor chegou antes.
+ *
+ * Chamado DEPOIS de o handler cumprir: o inbox registra o que já foi feito, e
+ * não o que se pretende fazer.
  */
 export async function markProcessed(
   pool: Pool,

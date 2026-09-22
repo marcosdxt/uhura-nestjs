@@ -16,7 +16,7 @@ import type { UhuraModuleOptions } from './config';
 import { UHURA_OPTIONS, UHURA_PG, UHURA_SUBSCRIBE_METADATA } from './constants';
 import type { UhuraSubscribeOptions } from './decorators/subscribe.decorator';
 import type { Envelope } from './envelope';
-import { markProcessed } from './storage';
+import { markProcessed, wasProcessed } from './storage';
 import { ensureTopology, queueName } from './transport';
 
 interface Handler {
@@ -114,20 +114,25 @@ export class UhuraConsumer implements OnApplicationBootstrap, OnModuleDestroy {
         return;
       }
 
-      // Idempotência: dedup por envelope.id antes de invocar handlers.
-      const isNew = await markProcessed(
-        this.pool,
-        envelope.id,
-        domain,
-        envelope.partitionkey ?? null,
-      );
-      if (isNew) {
-        for (const handler of matched) {
-          await handler.instance[handler.methodName](envelope.data, envelope);
+      // Idempotência: dedup por envelope.id, consultando ANTES e marcando
+      // DEPOIS. Marcar antes de o handler cumprir transformava a primeira falha
+      // em perda: o nack reentregava, a linha do inbox já existia, e a
+      // reentrega era descartada como duplicata — sem retry e sem parking, que
+      // é o contrário do que o inbox existe para garantir.
+      if (await wasProcessed(this.pool, envelope.id)) {
+        if (this.options.debug) {
+          this.logger.debug(`duplicado ignorado ${envelope.id}`);
         }
-      } else if (this.options.debug) {
-        this.logger.debug(`duplicado ignorado ${envelope.id}`);
+        channel.ack(msg);
+        return;
       }
+
+      for (const handler of matched) {
+        await handler.instance[handler.methodName](envelope.data, envelope);
+      }
+
+      // Só agora: o inbox registra o que foi feito, não o que se pretendia.
+      await markProcessed(this.pool, envelope.id, domain, envelope.partitionkey ?? null);
       channel.ack(msg);
     } catch (err) {
       this.logger.error(`falha ao processar: ${String(err)}`);

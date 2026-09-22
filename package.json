@@ -1,6 +1,6 @@
 {
   "name": "@marcosaquino/uhura-nestjs",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "SDK NestJS do Uhura message bus (decorators contract-first sobre RabbitMQ + PostgreSQL)",
   "license": "MIT",
   "repository": {

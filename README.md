@@ -62,6 +62,11 @@ async onChange(entity: UsuarioInfo, ctx: UhuraCdcContext) {}
 
 - **CloudEvents 1.0** envelope + **W3C/OpenTelemetry** *trace context* propagated across every hop.
 - **At-least-once delivery + idempotent Inbox = effectively-once** (not *exactly-once*).
+  The Inbox is written **after** the handler succeeds, so a failing handler is
+  retried and eventually parked instead of being swallowed as a duplicate. Two
+  concurrent deliveries of the same envelope can therefore both reach a handler
+  before either records it — the Inbox dedupes what was **done**, it is not a
+  lock.
 - Per-partition ordering via a *consistent-hash exchange* + *Single Active Consumer*.
 
 ## Status
