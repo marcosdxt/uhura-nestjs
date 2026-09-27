@@ -1,6 +1,6 @@
 {
   "name": "@marcosaquino/uhura-nestjs",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "SDK NestJS do Uhura message bus (decorators contract-first sobre RabbitMQ + PostgreSQL)",
   "license": "MIT",
   "repository": {
@@ -17,7 +17,8 @@
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist",
     "prepublishOnly": "npm run clean && npm run build",
-    "release": "bash scripts/publish.sh"
+    "release": "bash scripts/publish.sh",
+    "test": "npm run build && node --test --test-concurrency=1 test/"
   },
   "peerDependencies": {
     "@nestjs/common": "^10 || ^11",

@@ -17,7 +17,7 @@ import { UHURA_OPTIONS, UHURA_PG, UHURA_SUBSCRIBE_METADATA } from './constants';
 import type { UhuraSubscribeOptions } from './decorators/subscribe.decorator';
 import type { Envelope } from './envelope';
 import { markProcessed, wasProcessed } from './storage';
-import { ensureTopology, queueName } from './transport';
+import { ensureGroupTopology, queueName, resolveGroup } from './transport';
 
 interface Handler {
   options: UhuraSubscribeOptions;
@@ -44,6 +44,9 @@ export class UhuraConsumer implements OnApplicationBootstrap, OnModuleDestroy {
     if (handlers.length === 0) {
       return;
     }
+    // Antes de abrir canal: sem grupo não há fila para assinar, e o serviço
+    // não pode subir parecendo saudável sem consumir nada.
+    const group = resolveGroup(this.options.group);
 
     this.channel = await this.amqp.createChannel();
     await this.channel.prefetch(this.options.prefetch ?? 16);
@@ -56,8 +59,8 @@ export class UhuraConsumer implements OnApplicationBootstrap, OnModuleDestroy {
     }
 
     for (const [domain, domainHandlers] of byDomain) {
-      await ensureTopology(this.channel, domain);
-      const queue = queueName(domain);
+      await ensureGroupTopology(this.channel, domain, group);
+      const queue = queueName(domain, group);
       await this.channel.consume(
         queue,
         (msg) => {
@@ -65,7 +68,7 @@ export class UhuraConsumer implements OnApplicationBootstrap, OnModuleDestroy {
         },
         { noAck: false },
       );
-      this.logger.log(`assinando '${domain}' (${queue})`);
+      this.logger.log(`assinando '${domain}' como '${group}' (${queue})`);
     }
   }
 
@@ -114,7 +117,8 @@ export class UhuraConsumer implements OnApplicationBootstrap, OnModuleDestroy {
         return;
       }
 
-      // Idempotência: dedup por envelope.id, consultando ANTES e marcando
+      // Idempotência: dedup por envelope.id no inbox do banco DESTE serviço
+      // (um grupo, um banco), consultando ANTES e marcando
       // DEPOIS. Marcar antes de o handler cumprir transformava a primeira falha
       // em perda: o nack reentregava, a linha do inbox já existia, e a
       // reentrega era descartada como duplicata — sem retry e sem parking, que

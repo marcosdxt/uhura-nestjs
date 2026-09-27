@@ -10,6 +10,15 @@ export {
   type FactType,
 } from './envelope';
 export { UhuraModule } from './uhura.module';
+export {
+  exchangeName,
+  queueName,
+  parkingExchange,
+  parkingQueue,
+  rpcQueueName,
+  resolveGroup,
+  validateGroup,
+} from './transport';
 export { UhuraService, type PublishOptions } from './uhura.service';
 export type { CallOptions } from './rpc-client';
 export type { ResCode, RpcResult, RpcRequest } from './rpc';

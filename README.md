@@ -27,6 +27,9 @@ npm install @marcosaquino/uhura-nestjs
       amqpUrl: process.env.UHURA_AMQP_URL,   // amqp:// on a private cluster (v1)
       postgresUrl: process.env.UHURA_PG_URL, // source of truth (outbox/inbox)
       mesh: 'acme',
+      // Consumer group = the service name. Optional here when UHURA_GROUP or
+      // SERVICE_NAME is set; required (boot fails) if the service subscribes.
+      group: 'acme-billing',
       debug: false,
     }),
   ],
@@ -58,6 +61,46 @@ const res = await uhura.method(UsuarioInfo, 'hydrate', { id: '42' });
 async onChange(entity: UsuarioInfo, ctx: UhuraCdcContext) {}
 ```
 
+## Consumer groups (0.2)
+
+Every service that subscribes to a domain gets **its own copy** of every event:
+
+| Resource | Name |
+|----------|------|
+| Domain exchange (`topic`) | `uhura.<domain>` |
+| Group queue (quorum, DLX, `x-delivery-limit=5`, bound `#`) | `uhura.<domain>.<group>.q` |
+| Group parking (fanout exchange + quorum queue) | `uhura.<domain>.<group>.parking` / `.parking.q` |
+| RPC (point-to-point, no group) | `uhura.<domain>.rpc` |
+
+Names and arguments are byte-identical to the Rust driver (`uhura-core`,
+`uhura-transport`); a mismatch would make the broker reject the redeclare.
+
+- **Group = service name.** Resolved as `group` option → `UHURA_GROUP` →
+  `SERVICE_NAME` (the `dextro-service` chart already injects the release name).
+  Format `^[a-z0-9][a-z0-9-]{1,62}$` (no dots); `parking` and `rpc` are
+  reserved. A service with `@UhuraSubscribe`/`@UhuraEntityChange` handlers and
+  no group **fails at bootstrap**; an invalid explicit `group` fails in
+  `forRoot`.
+- Replicas of the same service share the group queue (competing consumers).
+- Up to 0.1 there was a single queue per domain (`uhura.<domain>.q`), so
+  different services competed for the same event and each event reached only
+  one of them. CDC (`@UhuraEntityChange`) used the same path and had the same
+  defect.
+- The Inbox dedupes by `envelope.id` in the **service's own database** — one
+  group, one database. Two groups sharing a database would dedupe each other.
+
+### Migrating from 0.1
+
+1. Deploy **every consumer** of the domain with 0.2 (group resolved). During
+   the rollout each event lands in the old queue (still bound) and in every
+   migrated group's queue; the Inbox drops the repeat.
+2. Deploy the stations (`uhura-engine`) built on `uhura-core` 0.2 — the old
+   station re-declares `uhura.<domain>.q` on publish.
+3. Per domain: `uhura queues retire <domain>` (Rust CLI). It republishes what is
+   left in the old queue and old parking to the domain exchange (each group gets
+   a copy; the Inbox dedupes) and deletes the old topology. It refuses while the
+   old queue still has consumers, and puts everything back if no group is bound.
+
 ## Guarantees
 
 - **CloudEvents 1.0** envelope + **W3C/OpenTelemetry** *trace context* propagated across every hop.
@@ -67,7 +110,9 @@ async onChange(entity: UsuarioInfo, ctx: UhuraCdcContext) {}
   concurrent deliveries of the same envelope can therefore both reach a handler
   before either records it — the Inbox dedupes what was **done**, it is not a
   lock.
-- Per-partition ordering via a *consistent-hash exchange* + *Single Active Consumer*.
+- Per-partition ordering: the routing key is the `partitionkey`. The spec's
+  *consistent-hash exchange* + *Single Active Consumer* are not implemented yet
+  in either SDK; when they land they will be per group (shards inside the group).
 
 ## Status
 
@@ -76,8 +121,8 @@ Rust engine** (`uhura-cli`), sharing the same outbox/inbox in Postgres and the s
 RabbitMQ topology:
 
 - `UhuraService.publish(domain, event, data, {partition})` — writes to the outbox.
-- `@UhuraSubscribe({domain, events})` — consumer with idempotency (Inbox),
-  ack/nack→parking.
+- `@UhuraSubscribe({domain, events})` — consumer on the service's group queue,
+  with idempotency (Inbox), ack/nack→group parking.
 - `@UhuraFunction({domain, method})` — RPC endpoint (server).
 - `UhuraService.call(domain, method, args)` — RPC client → `RpcResult<T>`.
 - `@UhuraEntityChange({domain, events})` — CDC handler (`inserted`/`updated`/
@@ -112,6 +157,7 @@ src/
 npm install
 npm run typecheck
 npm run build
+npm test        # node:test against dist, one file at a time (no broker needed)
 ```
 
 ## Publishing
