@@ -23,4 +23,30 @@ export interface UhuraModuleOptions {
   debug?: boolean;
   /** Prefetch do consumidor (default 16). */
   prefetch?: number;
+  /**
+   * Endpoint Prometheus do SDK. Default: `GET /metrics` (sem versão de URI)
+   * com as métricas do Uhura e as do processo.
+   *
+   * - `false`: não monta o endpoint (as métricas continuam sendo coletadas em
+   *   `UhuraMetrics.registry`, para o serviço que já tem o seu `/metrics`);
+   * - `{ path }`: outro caminho; `{ defaultMetrics: false }`: sem as do processo.
+   */
+  metrics?: false | UhuraMetricsOptions;
+  /**
+   * Controle de pausa da station (`uhura.control`). Default `true`: cada réplica
+   * escuta os comandos de pausa e, ao subir, pergunta o estado desejado do seu
+   * grupo antes de assinar as filas. `false` desliga (o grupo não pode ser
+   * pausado pelo painel).
+   */
+  control?: boolean;
+  /** Espera pela resposta do `getPaused` no boot (ms, default 3000). */
+  controlTimeoutMs?: number;
+}
+
+/** Opções do endpoint de métricas. */
+export interface UhuraMetricsOptions {
+  /** Caminho (default `metrics`). */
+  path?: string;
+  /** Inclui as métricas do processo (`collectDefaultMetrics`). Default `true`. */
+  defaultMetrics?: boolean;
 }

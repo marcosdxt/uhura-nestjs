@@ -122,7 +122,11 @@ test('consumidor sem grupo falha no bootstrap, antes de abrir canal', async () =
 
 test('consumidor assina a fila do grupo, com DLX para o parking do grupo', async () => {
   const canal = canalFalso();
-  const { consumer } = consumidor({ amqpUrl: '', postgresUrl: '', group: 'dextrolabs-audit' }, canal);
+  // Sem o controle de pausa (0.3): este teste olha só a topologia do grupo.
+  const { consumer } = consumidor(
+    { amqpUrl: '', postgresUrl: '', group: 'dextrolabs-audit', control: false },
+    canal,
+  );
   await consumer.onApplicationBootstrap();
 
   const fila = 'uhura.audit.dextrolabs-audit.q';

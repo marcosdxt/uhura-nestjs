@@ -3,7 +3,21 @@
 import 'reflect-metadata';
 
 export { UhuraAmqp } from './amqp';
-export type { UhuraModuleOptions } from './config';
+export type { UhuraModuleOptions, UhuraMetricsOptions } from './config';
+export {
+  UhuraMetrics,
+  type ConsumerResult,
+  type RpcClientResult,
+} from './metrics';
+export { createMetricsController, DEFAULT_METRICS_PATH } from './metrics.controller';
+export {
+  CONTROL_EXCHANGE,
+  CONTROL_RPC_QUEUE,
+  pausesFor,
+  type ControlMessage,
+  type PausedEntry,
+} from './control';
+export { UhuraConsumer } from './consumer';
 export {
   CLOUDEVENTS_SPEC_VERSION,
   newEnvelope,

@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 import {
   Inject,
   Injectable,
+  Optional,
   type OnApplicationBootstrap,
   type OnModuleDestroy,
 } from '@nestjs/common';
@@ -13,6 +14,7 @@ import type * as amqp from 'amqplib';
 import { UhuraAmqp } from './amqp';
 import type { UhuraModuleOptions } from './config';
 import { UHURA_OPTIONS } from './constants';
+import { type RpcClientResult, UhuraMetrics } from './metrics';
 import type { RpcResult } from './rpc';
 import { rpcQueueName } from './transport';
 
@@ -33,6 +35,7 @@ export class UhuraRpcClient implements OnApplicationBootstrap, OnModuleDestroy {
   constructor(
     private readonly amqp: UhuraAmqp,
     @Inject(UHURA_OPTIONS) private readonly options: UhuraModuleOptions,
+    @Optional() private readonly metrics?: UhuraMetrics,
   ) {}
 
   async onApplicationBootstrap(): Promise<void> {
@@ -92,6 +95,23 @@ export class UhuraRpcClient implements OnApplicationBootstrap, OnModuleDestroy {
     method: string,
     data: unknown,
     opts: CallOptions = {},
+  ): Promise<RpcResult<T>> {
+    const fim = this.metrics?.rpcClientDuration.startTimer({ domain, method });
+    const result = await this.chamar<T>(domain, method, data, opts);
+    fim?.();
+    let label: RpcClientResult = result.resCode;
+    if (result.resCode === 'exception' && result.errorMessage?.startsWith('timeout')) {
+      label = 'timeout';
+    }
+    this.metrics?.rpcClient.inc({ domain, method, result: label });
+    return result;
+  }
+
+  private async chamar<T>(
+    domain: string,
+    method: string,
+    data: unknown,
+    opts: CallOptions,
   ): Promise<RpcResult<T>> {
     const channel = this.channel;
     if (!channel) {

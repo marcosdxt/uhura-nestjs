@@ -21,6 +21,7 @@ import {
   Inject,
   Injectable,
   Logger,
+  Optional,
   type OnApplicationShutdown,
   type OnModuleInit,
 } from '@nestjs/common';
@@ -28,6 +29,7 @@ import * as amqp from 'amqplib';
 
 import type { UhuraModuleOptions } from './config';
 import { UHURA_OPTIONS } from './constants';
+import { UhuraMetrics } from './metrics';
 
 type AmqpConnection = Awaited<ReturnType<typeof amqp.connect>>;
 
@@ -47,6 +49,7 @@ export class UhuraAmqp implements OnModuleInit, OnApplicationShutdown {
 
   constructor(
     @Inject(UHURA_OPTIONS) private readonly options: UhuraModuleOptions,
+    @Optional() private readonly metrics?: UhuraMetrics,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -135,6 +138,7 @@ export class UhuraAmqp implements OnModuleInit, OnApplicationShutdown {
     }
     try {
       await this.conectar();
+      this.metrics?.reconnects.inc();
       this.logger.log('conexão AMQP restabelecida; reassinando');
       for (const fn of this.aoReconectar) {
         await fn();

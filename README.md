@@ -109,6 +109,60 @@ Names and arguments are byte-identical to the Rust driver (`uhura-core`,
    a copy; the Inbox dedupes) and deletes the old topology. It refuses while the
    old queue still has consumers, and puts everything back if no group is bound.
 
+## Metrics and pause control (0.3)
+
+### Prometheus metrics
+
+`UhuraModule.forRoot` now also provides `UhuraMetrics`, a prom-client
+**private registry** (never the global one, so it cannot clash with the
+service's own metrics):
+
+| Metric | Type | Labels |
+|---|---|---|
+| `uhura_consumer_handled_total` | counter | `domain`, `group`, `result` = `ok`\|`duplicate`\|`ignored`\|`error` |
+| `uhura_consumer_handler_duration_seconds` | histogram | `domain`, `group` |
+| `uhura_consumer_paused` | gauge | `domain`, `group` (1 = paused by the station) |
+| `uhura_rpc_client_total` | counter | `domain`, `method`, `result` = `ok`\|`error`\|`exception`\|`timeout` |
+| `uhura_rpc_client_duration_seconds` | histogram | `domain`, `method` |
+| `uhura_amqp_reconnects_total` | counter | — |
+
+plus the process metrics (`collectDefaultMetrics`) in the same registry.
+
+By default the module mounts **`GET /metrics`** (`VERSION_NEUTRAL`, so it is
+not turned into `/v1/metrics` by URI versioning). Kong only routes each
+service's API prefixes, so it is reachable inside the cluster only. Options:
+
+```ts
+UhuraModule.forRoot({ ..., metrics: false });                    // no endpoint
+UhuraModule.forRoot({ ..., metrics: { path: 'internal/metrics' } });
+UhuraModule.forRoot({ ..., metrics: { defaultMetrics: false } }); // SDK metrics only
+```
+
+A service that already has a `/metrics` sets `metrics: false` and merges:
+`Registry.merge([own, uhuraMetrics.registry])`.
+
+### Pausing a consumer group
+
+The station can pause a domain × group from the panel (Ambiente › Uhura):
+replicas stop **taking** messages (`basic.cancel`); the queue keeps receiving
+and nothing is lost. Protocol (`uhura-core` `control`):
+
+- each replica binds an exclusive, auto-delete, server-named queue to the
+  `uhura.control` topic exchange (`#`) and applies
+  `consumer-pause {domain, group, paused}` and
+  `consumer-snapshot {paused: [{domain, group}]}` (full state, every minute);
+- **on boot (and after every reconnect)** the replica asks
+  `uhura.control.rpc` `getPaused {group}` *before* subscribing, so a paused
+  domain is never consumed, not even for an instant. The desired state lives
+  in the DB of the station started with `UHURA_CONTROL_AUTHORITY=true`;
+- if the authority does not answer within `controlTimeoutMs` (3000), the
+  replica consumes everything and logs a warning; the next snapshot fixes it.
+  The request carries `expiration`, so it never piles up in the RPC queue;
+- messages already delivered when the pause arrives finish and are acked.
+
+`control: false` turns it off (0.2 behaviour). `UhuraConsumer.pausedDomains()`
+exposes the current state. 0.2 configs work unchanged.
+
 ## Guarantees
 
 - **CloudEvents 1.0** envelope + **W3C/OpenTelemetry** *trace context* propagated across every hop.
@@ -155,6 +209,9 @@ src/
   rpc-server.ts   # @UhuraFunction discovery + RPC responses
   rpc-client.ts   # RPC client (direct reply-to + correlationId)
   amqp.ts         # shared AMQP connection
+  control.ts      # pause control (uhura.control) + getPaused on boot
+  metrics.ts      # UhuraMetrics (prom-client, private registry)
+  metrics.controller.ts # GET /metrics
   uhura.module.ts # UhuraModule.forRoot
   decorators/     # @UhuraContract, @UhuraSubscribe, @UhuraFunction
 ```
@@ -166,6 +223,11 @@ npm install
 npm run typecheck
 npm run build
 npm test        # node:test against dist, one file at a time (no broker needed)
+
+# interop with a real station (skipped without the variables):
+UHURA_IT_AMQP_URL=amqp://... UHURA_IT_STATION_URL=http://127.0.0.1:18080 \
+UHURA_IT_ADMIN_TOKEN=... UHURA_IT_PG_URL=postgres://... \
+  node --test --test-concurrency=1 test/integracao.test.js
 ```
 
 ## Publishing
