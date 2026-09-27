@@ -15,7 +15,7 @@ import { UhuraAmqp } from './amqp';
 import type { UhuraModuleOptions } from './config';
 import { UHURA_OPTIONS } from './constants';
 import { type RpcClientResult, UhuraMetrics } from './metrics';
-import type { RpcResult } from './rpc';
+import { parseErrorCode, type RpcResult } from './rpc';
 import { rpcQueueName } from './transport';
 
 const DIRECT_REPLY_TO = 'amq.rabbitmq.reply-to';
@@ -58,6 +58,7 @@ export class UhuraRpcClient implements OnApplicationBootstrap, OnModuleDestroy {
       resolver({
         data: null,
         resCode: 'exception',
+        errorCode: 'DISCONNECTED',
         errorMessage: 'conexão AMQP caiu antes da resposta',
       });
     }
@@ -89,7 +90,12 @@ export class UhuraRpcClient implements OnApplicationBootstrap, OnModuleDestroy {
     );
   }
 
-  /** Chama um método RPC e devolve o `RpcResult` (nunca lança; erros viram `exception`). */
+  /**
+   * Chama um método RPC e devolve o `RpcResult` (nunca lança; erros viram
+   * `exception`). Em erro, `errorCode` vem preenchido sempre que houver um
+   * código — no campo (servidor 0.4+), em `errorStack.code` (driver Rust) ou
+   * no prefixo `"CODE: mensagem"` (servidor até a 0.3).
+   */
   async call<T = unknown>(
     domain: string,
     method: string,
@@ -99,8 +105,12 @@ export class UhuraRpcClient implements OnApplicationBootstrap, OnModuleDestroy {
     const fim = this.metrics?.rpcClientDuration.startTimer({ domain, method });
     const result = await this.chamar<T>(domain, method, data, opts);
     fim?.();
+    const errorCode = parseErrorCode(result);
+    if (errorCode !== undefined) {
+      result.errorCode = errorCode;
+    }
     let label: RpcClientResult = result.resCode;
-    if (result.resCode === 'exception' && result.errorMessage?.startsWith('timeout')) {
+    if (result.resCode === 'exception' && errorCode === 'TIMEOUT') {
       label = 'timeout';
     }
     this.metrics?.rpcClient.inc({ domain, method, result: label });
@@ -115,7 +125,12 @@ export class UhuraRpcClient implements OnApplicationBootstrap, OnModuleDestroy {
   ): Promise<RpcResult<T>> {
     const channel = this.channel;
     if (!channel) {
-      return { data: null, resCode: 'exception', errorMessage: 'cliente RPC não inicializado' };
+      return {
+        data: null,
+        resCode: 'exception',
+        errorCode: 'DISCONNECTED',
+        errorMessage: 'cliente RPC não inicializado',
+      };
     }
 
     const queue = rpcQueueName(domain);
@@ -132,7 +147,12 @@ export class UhuraRpcClient implements OnApplicationBootstrap, OnModuleDestroy {
     return new Promise<RpcResult<T>>((resolve) => {
       const timer = setTimeout(() => {
         if (this.pending.delete(correlationId)) {
-          resolve({ data: null, resCode: 'exception', errorMessage: `timeout após ${timeoutMs}ms` });
+          resolve({
+            data: null,
+            resCode: 'exception',
+            errorCode: 'TIMEOUT',
+            errorMessage: `timeout após ${timeoutMs}ms`,
+          });
         }
       }, timeoutMs);
       this.pending.set(correlationId, (res) => {

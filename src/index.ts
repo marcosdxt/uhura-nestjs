@@ -23,6 +23,7 @@ export {
   newEnvelope,
   type Envelope,
   type FactType,
+  type UhuraEventContext,
 } from './envelope';
 export { UhuraModule } from './uhura.module';
 export {
@@ -36,7 +37,14 @@ export {
 } from './transport';
 export { UhuraService, type PublishOptions } from './uhura.service';
 export type { CallOptions } from './rpc-client';
-export type { ResCode, RpcResult, RpcRequest } from './rpc';
+export {
+  RpcError,
+  parseErrorCode,
+  type ResCode,
+  type RpcResult,
+  type RpcRequest,
+  type UhuraRpcContext,
+} from './rpc';
 export {
   UhuraContract,
   type UhuraContractOptions,

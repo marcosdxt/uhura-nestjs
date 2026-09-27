@@ -17,7 +17,7 @@ import type { UhuraModuleOptions } from './config';
 import { UHURA_OPTIONS, UHURA_PG, UHURA_SUBSCRIBE_METADATA } from './constants';
 import { PauseControl } from './control';
 import type { UhuraSubscribeOptions } from './decorators/subscribe.decorator';
-import type { Envelope } from './envelope';
+import type { Envelope, UhuraEventContext } from './envelope';
 import { type ConsumerResult, UhuraMetrics } from './metrics';
 import { markProcessed, wasProcessed } from './storage';
 import { ensureGroupTopology, queueName, resolveGroup } from './transport';
@@ -250,8 +250,17 @@ export class UhuraConsumer implements OnApplicationBootstrap, OnModuleDestroy {
         return;
       }
 
+      this.observarAtraso(labels, envelope);
+      const ctx: UhuraEventContext = {
+        ...envelope,
+        domain,
+        event,
+        group: this.group,
+        redelivered: msg.fields?.redelivered === true,
+        envelope,
+      };
       for (const handler of matched) {
-        await handler.instance[handler.methodName](envelope.data, envelope);
+        await handler.instance[handler.methodName](envelope.data, ctx);
       }
 
       // Só agora: o inbox registra o que foi feito, não o que se pretendia.
@@ -264,6 +273,23 @@ export class UhuraConsumer implements OnApplicationBootstrap, OnModuleDestroy {
       // requeue → retry; após x-delivery-limit vai ao parking.
       channel.nack(msg, false, true);
     }
+  }
+
+  /**
+   * Publicação → consumo: agora − `time` do envelope (CloudEvents), medido
+   * quando o handler começa. Inclui outbox, station, broker e fila parada
+   * (pausa, retry); depende dos relógios em NTP — atraso negativo vira 0.
+   * Envelope sem `time` (ou ilegível) não entra na série.
+   */
+  private observarAtraso(labels: { domain: string; group: string }, envelope: Envelope): void {
+    if (!this.metrics || typeof envelope.time !== 'string') {
+      return;
+    }
+    const publicado = Date.parse(envelope.time);
+    if (Number.isNaN(publicado)) {
+      return;
+    }
+    this.metrics.consumerLag.observe(labels, Math.max(0, (Date.now() - publicado) / 1000));
   }
 
   async onModuleDestroy(): Promise<void> {

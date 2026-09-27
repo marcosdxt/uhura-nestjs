@@ -122,6 +122,7 @@ service's own metrics):
 | `uhura_consumer_handled_total` | counter | `domain`, `group`, `result` = `ok`\|`duplicate`\|`ignored`\|`error` |
 | `uhura_consumer_handler_duration_seconds` | histogram | `domain`, `group` |
 | `uhura_consumer_paused` | gauge | `domain`, `group` (1 = paused by the station) |
+| `uhura_consumer_lag_seconds` (0.4) | histogram | `domain`, `group` — publish → consume |
 | `uhura_rpc_client_total` | counter | `domain`, `method`, `result` = `ok`\|`error`\|`exception`\|`timeout` |
 | `uhura_rpc_client_duration_seconds` | histogram | `domain`, `method` |
 | `uhura_amqp_reconnects_total` | counter | — |
@@ -162,6 +163,62 @@ and nothing is lost. Protocol (`uhura-core` `control`):
 
 `control: false` turns it off (0.2 behaviour). `UhuraConsumer.pausedDomains()`
 exposes the current state. 0.2 configs work unchanged.
+
+## Business errors, handler context and consumer lag (0.4)
+
+### `RpcError`
+
+```ts
+import { RpcError, UhuraFunction, type UhuraRpcContext } from '@dextro/uhura-nestjs';
+
+@UhuraFunction({ domain: 'user.rpc', method: 'getUser' })
+async getUser(input: GetUserInput, ctx: UhuraRpcContext) {
+  throw new RpcError('USER_NOT_FOUND', 'Usuário não encontrado.', { detail: 'X' });
+}
+```
+
+The server replies
+
+```json
+{ "data": null, "resCode": "error", "errorCode": "USER_NOT_FOUND",
+  "errorMessage": "Usuário não encontrado.", "errorStack": { "detail": "X", "code": "USER_NOT_FOUND" } }
+```
+
+`errorStack.code` is where the Rust driver (`dextrolabs-device`) already puts
+the code; `errorCode` is the field proper (also in `uhura-core`'s `RpcResult`).
+Any other exception is still `resCode: 'exception'` (unexpected failure).
+Detection uses a `Symbol.for` brand, so an `RpcError` from another copy of the
+package still counts.
+
+On the client, `UhuraService.call` fills `errorCode` whenever a code exists:
+the field (0.4+ servers), `errorStack.code` (Rust driver) or the legacy
+`"CODE: message"` prefix (NestJS servers up to 0.3, which threw plain errors).
+`errorMessage` is never rewritten. Local failures get codes too: `TIMEOUT`
+(counted as `result="timeout"`) and `DISCONNECTED`. `parseErrorCode(result)` is
+exported for results obtained elsewhere.
+
+### Handler context (idempotency)
+
+- `@UhuraFunction` handlers get `(data, ctx: UhuraRpcContext)`:
+  `{ id, domain, method, correlationId, redelivered }`. `id` is the
+  `RpcRequest.id` — one per call — so the server can dedupe retries.
+- `@UhuraSubscribe` / `@UhuraEntityChange` handlers get
+  `(data, ctx: UhuraEventContext)`. `ctx` **is the envelope** (as in 0.3, so
+  `ctx.id`, `ctx.type`, `ctx.time`… keep working) plus `domain`, `event`,
+  `group`, `redelivered` and `envelope` (the raw envelope). `ctx.id` is the
+  envelope id, the idempotency key.
+
+### `uhura_consumer_lag_seconds`
+
+Histogram `{domain, group}` = now − envelope `time` (CloudEvents), observed when
+the handlers start (after the Inbox check). It covers outbox → station → broker →
+queue wait (including pause and retries); buckets go up to 1 h. Envelopes
+without a valid `time` are not observed; negative values (publisher clock ahead)
+count as 0. p95 for the panel:
+
+```
+histogram_quantile(0.95, sum by (le) (rate(uhura_consumer_lag_seconds_bucket[5m])))
+```
 
 ## Guarantees
 
@@ -208,6 +265,7 @@ src/
   consumer.ts     # @UhuraSubscribe discovery + idempotent consumption
   rpc-server.ts   # @UhuraFunction discovery + RPC responses
   rpc-client.ts   # RPC client (direct reply-to + correlationId)
+  rpc.ts          # RpcResult, RpcError, UhuraRpcContext
   amqp.ts         # shared AMQP connection
   control.ts      # pause control (uhura.control) + getPaused on boot
   metrics.ts      # UhuraMetrics (prom-client, private registry)

@@ -21,6 +21,12 @@ export type RpcClientResult = 'ok' | 'error' | 'exception' | 'timeout';
 /** Buckets de duração (s): handler e RPC vivem entre milissegundos e o timeout de 30 s. */
 const BUCKETS = [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30];
 
+/**
+ * Buckets do atraso publicação → consumo (s). Vai além da duração: uma fila
+ * pausada ou em retry segura o evento por minutos, e o p95 precisa enxergar.
+ */
+const LAG_BUCKETS = [0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 300, 900, 3600];
+
 @Injectable()
 export class UhuraMetrics {
   /** O registro do SDK: monte-o no `/metrics` do serviço. */
@@ -29,6 +35,7 @@ export class UhuraMetrics {
   readonly consumerHandled: Counter<'domain' | 'group' | 'result'>;
   readonly consumerDuration: Histogram<'domain' | 'group'>;
   readonly consumerPaused: Gauge<'domain' | 'group'>;
+  readonly consumerLag: Histogram<'domain' | 'group'>;
   readonly rpcClient: Counter<'domain' | 'method' | 'result'>;
   readonly rpcClientDuration: Histogram<'domain' | 'method'>;
   readonly reconnects: Counter<never>;
@@ -52,6 +59,13 @@ export class UhuraMetrics {
       name: 'uhura_consumer_paused',
       help: '1 quando o consumo do domínio × grupo está pausado pelo controle da station.',
       labelNames: ['domain', 'group'],
+      registers,
+    });
+    this.consumerLag = new Histogram({
+      name: 'uhura_consumer_lag_seconds',
+      help: 'Atraso publicação → consumo: agora − time do envelope, quando o handler começa.',
+      labelNames: ['domain', 'group'],
+      buckets: LAG_BUCKETS,
       registers,
     });
     this.rpcClient = new Counter({

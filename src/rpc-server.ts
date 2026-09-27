@@ -14,7 +14,7 @@ import { UhuraAmqp } from './amqp';
 import type { UhuraModuleOptions } from './config';
 import { UHURA_FUNCTION_METADATA, UHURA_OPTIONS } from './constants';
 import type { UhuraFunctionOptions } from './decorators/function.decorator';
-import type { RpcRequest, RpcResult } from './rpc';
+import { RpcError, type RpcRequest, type RpcResult, type UhuraRpcContext } from './rpc';
 import { rpcQueueName } from './transport';
 
 interface FnHandler {
@@ -117,20 +117,38 @@ export class UhuraRpcServer implements OnApplicationBootstrap, OnModuleDestroy {
         result = {
           data: null,
           resCode: 'error',
+          errorCode: 'UNKNOWN_METHOD',
           errorMessage: `método desconhecido: ${request.method}`,
+          errorStack: { code: 'UNKNOWN_METHOD' },
         };
       } else {
-        const data = await handler.instance[handler.methodName](request.data);
+        const ctx: UhuraRpcContext = {
+          id: request.id,
+          domain: request.domain,
+          method: request.method,
+          correlationId: msg.properties.correlationId as string | undefined,
+          redelivered: msg.fields?.redelivered === true,
+        };
+        const data = await handler.instance[handler.methodName](request.data, ctx);
         result = { data: data ?? null, resCode: 'ok' };
       }
     } catch (err) {
-      const error = err as Error;
-      result = {
-        data: null,
-        resCode: 'exception',
-        errorMessage: error?.message ?? String(err),
-        errorStack: this.options.debug ? error?.stack : undefined,
-      };
+      result = RpcError.is(err)
+        ? {
+            // Erro de negocio: codigo e mensagem em campos proprios, e o codigo
+            // tambem em `errorStack.code`, onde o driver Rust do device o poe.
+            data: null,
+            resCode: 'error',
+            errorCode: err.code,
+            errorMessage: err.message,
+            errorStack: { ...(err.details ?? {}), code: err.code },
+          }
+        : {
+            data: null,
+            resCode: 'exception',
+            errorMessage: (err as Error)?.message ?? String(err),
+            errorStack: this.options.debug ? (err as Error)?.stack : undefined,
+          };
     }
 
     const replyTo = msg.properties.replyTo as string | undefined;

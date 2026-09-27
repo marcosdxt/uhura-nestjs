@@ -40,6 +40,27 @@ export interface Envelope {
   data?: unknown;
 }
 
+/**
+ * Contexto entregue a um handler `@UhuraSubscribe`/`@UhuraEntityChange` como
+ * segundo argumento.
+ *
+ * É o próprio envelope (compatível com a 0.3, que passava o envelope cru) mais
+ * o que a entrega sabe. `id` é o id do envelope: a chave de idempotência — o
+ * mesmo evento reentregue chega com o mesmo `id`.
+ */
+export interface UhuraEventContext extends Envelope {
+  /** Domínio assinado (ex.: `audit`). */
+  domain: string;
+  /** Evento sem o prefixo do domínio (ex.: `recorded`). */
+  event: string;
+  /** Grupo de consumo deste serviço. */
+  group: string;
+  /** `true` quando o broker já entregou esta mensagem antes (retry). */
+  redelivered: boolean;
+  /** O envelope como chegou, sem os campos de contexto. */
+  envelope: Envelope;
+}
+
 /** Cria um envelope mínimo válido (CloudEvents 1.0). */
 export function newEnvelope(id: string, source: string, type: string): Envelope {
   return {
