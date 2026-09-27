@@ -1,24 +1,26 @@
 {
-  "name": "@marcosaquino/uhura-nestjs",
+  "name": "@dextro/uhura-nestjs",
   "version": "0.2.0",
   "description": "SDK NestJS do Uhura message bus (decorators contract-first sobre RabbitMQ + PostgreSQL)",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/marcosdxt/uhura-nestjs"
+    "url": "https://github.com/Dextro-Labs/uhura-nestjs"
   },
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "files": [
     "dist"
   ],
+  "publishConfig": {
+    "registry": "https://npm.dextrolabs.com.br/"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist",
     "prepublishOnly": "npm run clean && npm run build",
-    "release": "bash scripts/publish.sh",
-    "test": "npm run build && node --test --test-concurrency=1 test/"
+    "test": "npm run build && node --test --test-concurrency=1 test/*.test.js"
   },
   "peerDependencies": {
     "@nestjs/common": "^10 || ^11",

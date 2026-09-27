@@ -2,7 +2,7 @@
 
 NestJS SDK for **Uhura** — a *contract-first* message bus for microservice meshes, built on RabbitMQ + PostgreSQL.
 
-> Package: `@marcosaquino/uhura-nestjs` (published on npmjs.com). Part of the Uhura project. The full formal specification lives in [`dextro-message-bus/SPEC.md`](../dextro-message-bus/SPEC.md).
+> Package: `@dextro/uhura-nestjs` (private Dextro registry — Verdaccio, `npm.dextrolabs.com.br`). Part of the Uhura project. The full formal specification lives in [`dextro-message-bus/SPEC.md`](../dextro-message-bus/SPEC.md).
 
 ## What this package does
 
@@ -15,8 +15,16 @@ Exposes Uhura to NestJS code through **decorators** and a module. Same semantics
 
 ## Installation
 
+The package lives in the `@dextro` scope of the Dextro Verdaccio. Point the
+scope at it in the project's `.npmrc` (the `dextro-service` pipeline writes this
+itself, with the in-cluster address):
+
+```
+@dextro:registry=https://npm.dextrolabs.com.br/
+```
+
 ```bash
-npm install @marcosaquino/uhura-nestjs
+npm install @dextro/uhura-nestjs
 ```
 
 ```ts
@@ -162,17 +170,12 @@ npm test        # node:test against dist, one file at a time (no broker needed)
 
 ## Publishing
 
-The publish token lives in `.npm_secret` (git-ignored), in npmrc format:
+Publishing is done by **Jenkins** (`dextro-pipeline`, `dextroLib(stack: 'node')`
+in the `Jenkinsfile`), never from a workstation. On `main`, after lint/build/test,
+the pipeline publishes `@dextro/uhura-nestjs` to the Verdaccio **if the version in
+`package.json` is not there yet** — bumping `version` is the release request; a
+repeated version is a no-op with a warning. Prereleases (`x.y.z-rc.N`) go out
+under the `next` dist-tag.
 
-```
-//registry.npmjs.org/:_authToken=npm_xxxxxxxx
-```
-
-Then run:
-
-```bash
-npm run release
-```
-
-This cleans, builds, and runs `npm publish --access public` using that token.
-Extra flags are forwarded, e.g. `npm run release -- --dry-run`.
+The package was `@marcosaquino/uhura-nestjs` on npmjs up to 0.1.0; from 0.2.0 on
+it is only `@dextro/uhura-nestjs`.
