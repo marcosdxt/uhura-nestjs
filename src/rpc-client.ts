@@ -36,6 +36,31 @@ export class UhuraRpcClient implements OnApplicationBootstrap, OnModuleDestroy {
   ) {}
 
   async onApplicationBootstrap(): Promise<void> {
+    await this.abrirRespostas();
+
+    // Tres coisas morrem com a conexao aqui, e cada uma calaria o cliente de um
+    // jeito diferente: o canal, a fila de respostas (direct reply-to, que e por
+    // canal) e o cache `declared`. Sem reabrir, toda chamada seguinte espera
+    // uma resposta que nunca chega e vira timeout — que o chamador le como
+    // lentidao do OUTRO servico, e nao como conexao perdida aqui.
+    this.amqp.onReconnect(() => this.abrirRespostas());
+  }
+
+  private async abrirRespostas(): Promise<void> {
+    // As pendentes nao sobrevivem: a resposta delas vinha pelo canal que
+    // morreu. Resolver agora, com erro, e melhor que deixar o chamador no
+    // timeout — ele fica sabendo a causa.
+    for (const [id, resolver] of this.pending) {
+      this.pending.delete(id);
+      resolver({
+        data: null,
+        resCode: 'exception',
+        errorMessage: 'conexão AMQP caiu antes da resposta',
+      });
+    }
+    // O redeclare de fila e por canal; o canal novo precisa refaze-lo.
+    this.declared.clear();
+
     this.channel = await this.amqp.createChannel();
     await this.channel.consume(
       DIRECT_REPLY_TO,

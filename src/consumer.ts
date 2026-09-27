@@ -30,6 +30,8 @@ interface Handler {
 export class UhuraConsumer implements OnApplicationBootstrap, OnModuleDestroy {
   private readonly logger = new Logger('Uhura');
   private channel?: amqp.Channel;
+  private byDomain = new Map<string, Handler[]>();
+  private group = '';
 
   constructor(
     private readonly discovery: DiscoveryService,
@@ -46,29 +48,52 @@ export class UhuraConsumer implements OnApplicationBootstrap, OnModuleDestroy {
     }
     // Antes de abrir canal: sem grupo não há fila para assinar, e o serviço
     // não pode subir parecendo saudável sem consumir nada.
-    const group = resolveGroup(this.options.group);
+    this.group = resolveGroup(this.options.group);
 
-    this.channel = await this.amqp.createChannel();
-    await this.channel.prefetch(this.options.prefetch ?? 16);
-
-    const byDomain = new Map<string, Handler[]>();
+    this.byDomain = new Map<string, Handler[]>();
     for (const handler of handlers) {
-      const list = byDomain.get(handler.options.domain) ?? [];
+      const list = this.byDomain.get(handler.options.domain) ?? [];
       list.push(handler);
-      byDomain.set(handler.options.domain, list);
+      this.byDomain.set(handler.options.domain, list);
     }
 
-    for (const [domain, domainHandlers] of byDomain) {
-      await ensureGroupTopology(this.channel, domain, group);
-      const queue = queueName(domain, group);
-      await this.channel.consume(
+    await this.assinar();
+
+    // Sem isto, a reconexao devolveria uma conexao viva e uma fila SEM
+    // consumidor — pior que continuar caido, porque parece resolvido: o pod
+    // fica Ready, o broker aceita publicacao, e as mensagens se empilham sem
+    // ninguem para retira-las.
+    this.amqp.onReconnect(() => this.assinar());
+  }
+
+  /**
+   * Abre o canal e consome cada dominio. Idempotente de proposito: roda no
+   * bootstrap E depois de cada reconexao.
+   *
+   * O canal antigo nao e fechado aqui — quando a conexao cai, ele ja morreu
+   * com ela, e chamar `close()` num canal orfao levanta. A referencia e
+   * simplesmente substituida.
+   */
+  private async assinar(): Promise<void> {
+    const channel = await this.amqp.createChannel();
+    await channel.prefetch(this.options.prefetch ?? 16);
+    this.channel = channel;
+
+    for (const [domain, domainHandlers] of this.byDomain) {
+      await ensureGroupTopology(channel, domain, this.group);
+      const queue = queueName(domain, this.group);
+      await channel.consume(
         queue,
         (msg) => {
-          void this.onMessage(domain, domainHandlers, msg);
+          // O canal vai FECHADO no callback, e nao lido de `this` na hora do
+          // ack: depois de uma reconexao, `this.channel` ja e outro, e dar ack
+          // no canal novo para uma mensagem entregue no antigo levanta
+          // "unknown delivery tag" — a mensagem volta e o ciclo se repete.
+          void this.onMessage(channel, domain, domainHandlers, msg);
         },
         { noAck: false },
       );
-      this.logger.log(`assinando '${domain}' como '${group}' (${queue})`);
+      this.logger.log(`assinando '${domain}' como '${this.group}' (${queue})`);
     }
   }
 
@@ -97,12 +122,12 @@ export class UhuraConsumer implements OnApplicationBootstrap, OnModuleDestroy {
   }
 
   private async onMessage(
+    channel: amqp.Channel,
     domain: string,
     handlers: Handler[],
     msg: amqp.ConsumeMessage | null,
   ): Promise<void> {
-    const channel = this.channel;
-    if (!msg || !channel) {
+    if (!msg) {
       return;
     }
     try {

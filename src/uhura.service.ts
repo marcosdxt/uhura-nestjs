@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { Inject, Injectable } from '@nestjs/common';
 import type { Pool } from 'pg';
 
+import { UhuraAmqp } from './amqp';
 import type { UhuraModuleOptions } from './config';
 import { UHURA_OPTIONS, UHURA_PG } from './constants';
 import { newEnvelope } from './envelope';
@@ -27,7 +28,25 @@ export class UhuraService {
     @Inject(UHURA_PG) private readonly pool: Pool,
     @Inject(UHURA_OPTIONS) private readonly options: UhuraModuleOptions,
     private readonly rpc: UhuraRpcClient,
+    private readonly amqp: UhuraAmqp,
   ) {}
+
+  /**
+   * `true` quando ha conexao viva com o broker.
+   *
+   * Existe para a READINESS do servico, e a distincao importa: sem consultar
+   * isto, um pod que perdeu a conexao continua respondendo HTTP, continua
+   * passando no health check e continua sendo enviado trafego — enquanto nao
+   * consome mensagem nenhuma. Foi assim que em 2026-09-22 o
+   * `dextrolabs-notification` ficou horas saudavel e mudo.
+   *
+   * Publicar NAO depende disto: `publish` grava no outbox do Postgres, e quem
+   * entrega ao broker e a station. Um servico desconectado ainda aceita
+   * trabalho sem perde-lo — o que ele nao faz e CONSUMIR.
+   */
+  isBrokerConnected(): boolean {
+    return this.amqp.isConnected();
+  }
 
   /** Chama um método RPC (`@UhuraFunction`) e devolve o `RpcResult`. */
   call<T = unknown>(

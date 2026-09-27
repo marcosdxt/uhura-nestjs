@@ -95,6 +95,7 @@ const consumidor = (options, canal) => {
   };
   let canaisAbertos = 0;
   const amqp = {
+    onReconnect: () => {},
     createChannel: async () => {
       canaisAbertos += 1;
       return canal;

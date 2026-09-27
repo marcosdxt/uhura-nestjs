@@ -2,6 +2,7 @@
 
 import 'reflect-metadata';
 
+export { UhuraAmqp } from './amqp';
 export type { UhuraModuleOptions } from './config';
 export {
   CLOUDEVENTS_SPEC_VERSION,

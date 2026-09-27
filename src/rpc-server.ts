@@ -27,6 +27,7 @@ interface FnHandler {
 export class UhuraRpcServer implements OnApplicationBootstrap, OnModuleDestroy {
   private readonly logger = new Logger('Uhura');
   private channel?: amqp.Channel;
+  private byDomain = new Map<string, Map<string, FnHandler>>();
 
   constructor(
     private readonly discovery: DiscoveryService,
@@ -36,23 +37,34 @@ export class UhuraRpcServer implements OnApplicationBootstrap, OnModuleDestroy {
   ) {}
 
   async onApplicationBootstrap(): Promise<void> {
-    const byDomain = this.discover();
-    if (byDomain.size === 0) {
+    this.byDomain = this.discover();
+    if (this.byDomain.size === 0) {
       return;
     }
-    this.channel = await this.amqp.createChannel();
-    await this.channel.prefetch(this.options.prefetch ?? 16);
+    await this.servir();
 
-    for (const [domain, methods] of byDomain) {
+    // O RPC cai junto com o consumidor, e em silencio igual: quem chamar passa
+    // a receber timeout em vez de erro, o que parece lentidao do outro servico.
+    this.amqp.onReconnect(() => this.servir());
+  }
+
+  /** Abre o canal e serve cada dominio. Roda no bootstrap e na reconexao. */
+  private async servir(): Promise<void> {
+    const channel = await this.amqp.createChannel();
+    await channel.prefetch(this.options.prefetch ?? 16);
+    this.channel = channel;
+
+    for (const [domain, methods] of this.byDomain) {
       const queue = rpcQueueName(domain);
-      await this.channel.assertQueue(queue, {
+      await channel.assertQueue(queue, {
         durable: true,
         arguments: { 'x-queue-type': 'quorum' },
       });
-      await this.channel.consume(
+      await channel.consume(
         queue,
         (msg) => {
-          void this.onRequest(methods, msg);
+          // Canal fechado no callback: ver o comentario gemeo no consumer.
+          void this.onRequest(channel, methods, msg);
         },
         { noAck: false },
       );
@@ -89,11 +101,11 @@ export class UhuraRpcServer implements OnApplicationBootstrap, OnModuleDestroy {
   }
 
   private async onRequest(
+    channel: amqp.Channel,
     methods: Map<string, FnHandler>,
     msg: amqp.ConsumeMessage | null,
   ): Promise<void> {
-    const channel = this.channel;
-    if (!msg || !channel) {
+    if (!msg) {
       return;
     }
 
