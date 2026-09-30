@@ -128,6 +128,7 @@ export class UhuraRpcServer implements OnApplicationBootstrap, OnModuleDestroy {
           method: request.method,
           correlationId: msg.properties.correlationId as string | undefined,
           redelivered: msg.fields?.redelivered === true,
+          ...(msg.properties.userId ? { callerUser: msg.properties.userId as string } : {}),
         };
         const data = await handler.instance[handler.methodName](request.data, ctx);
         result = { data: data ?? null, resCode: 'ok' };

@@ -299,3 +299,22 @@ under the `next` dist-tag.
 
 The package was `@marcosaquino/uhura-nestjs` on npmjs up to 0.1.0; from 0.2.0 on
 it is only `@dextro/uhura-nestjs`.
+
+## Caller identity in RPC (0.5)
+
+Every RPC request carries the AMQP `user-id` property set to the user of the
+client's connection URL. RabbitMQ **rejects** a publish whose `user-id` differs
+from the authenticated connection user, so on the server side
+`ctx.callerUser` is an identity guaranteed by the broker — unlike the `ctx`
+object inside the request data, which is whatever the caller declares.
+
+```ts
+@UhuraFunction({ domain: 'user.rpc', method: 'getUser' })
+async getUser(input: GetUserInput, ctx: UhuraRpcContext) {
+  // ctx.callerUser === 'dextrolabs-terminal' when the terminal connects with
+  // its own RabbitMQ user; undefined for clients older than 0.5.
+}
+```
+
+It only identifies services if each service connects with its **own**
+RabbitMQ user.

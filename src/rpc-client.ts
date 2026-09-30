@@ -26,17 +26,36 @@ export interface CallOptions {
   timeoutMs?: number;
 }
 
+/**
+ * Usuário da URL AMQP (`amqp://usuario:senha@host`), ou `undefined` sem
+ * usuário na URL — aí o amqplib conecta como `guest` e nada vai em `user-id`.
+ */
+export const amqpUser = (url: string | undefined): string | undefined => {
+  if (!url) return undefined;
+  try {
+    const user = decodeURIComponent(new URL(url).username);
+    return user || undefined;
+  } catch {
+    return undefined;
+  }
+};
+
 @Injectable()
 export class UhuraRpcClient implements OnApplicationBootstrap, OnModuleDestroy {
   private channel?: amqp.Channel;
   private readonly pending = new Map<string, (res: RpcResult) => void>();
   private readonly declared = new Set<string>();
 
+  /** Usuário da conexão AMQP, que vai como `user-id` em cada requisição. */
+  private readonly user: string | undefined;
+
   constructor(
     private readonly amqp: UhuraAmqp,
     @Inject(UHURA_OPTIONS) private readonly options: UhuraModuleOptions,
     @Optional() private readonly metrics?: UhuraMetrics,
-  ) {}
+  ) {
+    this.user = amqpUser(options.amqpUrl);
+  }
 
   async onApplicationBootstrap(): Promise<void> {
     await this.abrirRespostas();
@@ -162,7 +181,14 @@ export class UhuraRpcClient implements OnApplicationBootstrap, OnModuleDestroy {
       channel.sendToQueue(
         queue,
         Buffer.from(JSON.stringify({ id: correlationId, domain, method, data })),
-        { correlationId, replyTo: DIRECT_REPLY_TO, contentType: 'application/json' },
+        {
+          correlationId,
+          replyTo: DIRECT_REPLY_TO,
+          contentType: 'application/json',
+          // Quem chama, validado pelo broker: o RabbitMQ recusa `user-id`
+          // diferente do usuário da conexão. O servidor lê em `ctx.callerUser`.
+          ...(this.user ? { userId: this.user } : {}),
+        },
       );
     });
   }

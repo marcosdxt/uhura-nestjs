@@ -43,6 +43,16 @@ export interface UhuraRpcContext {
   correlationId?: string;
   /** `true` quando o broker já entregou esta requisição antes (reentrega). */
   redelivered: boolean;
+  /**
+   * Usuário do RabbitMQ que publicou a requisição (propriedade AMQP `user-id`).
+   *
+   * É a única identidade do chamador que o próprio broker garante: o RabbitMQ
+   * recusa a publicação cujo `user-id` difere do usuário autenticado na
+   * conexão. O `ctx` que vai nos dados (`serviceName` etc.) é o que o chamador
+   * DIZ; este é quem ele É. `undefined` quando o cliente não mandou a
+   * propriedade (SDK < 0.5 ou outro cliente).
+   */
+  callerUser?: string;
 }
 
 const RPC_ERROR: unique symbol = Symbol.for('uhura.RpcError') as never;
