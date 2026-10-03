@@ -53,3 +53,17 @@ export async function markProcessed(
   );
   return res.rowCount === 1;
 }
+
+/**
+ * O backlog do `uhura_outbox`: quantos eventos esperam a station e a idade do
+ * mais antigo. Usa o índice parcial `WHERE published_at IS NULL`.
+ */
+export async function outboxBacklog(pool: Pool): Promise<{ pending: number; oldestAgeSeconds: number }> {
+  const res = await pool.query(
+    'SELECT count(*)::int AS pending, ' +
+      'COALESCE(EXTRACT(EPOCH FROM now() - min(created_at)), 0)::float8 AS age ' +
+      'FROM uhura_outbox WHERE published_at IS NULL',
+  );
+  const row = res.rows[0] ?? { pending: 0, age: 0 };
+  return { pending: Number(row.pending), oldestAgeSeconds: Number(row.age) };
+}

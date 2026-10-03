@@ -217,6 +217,9 @@ export class UhuraConsumer implements OnApplicationBootstrap, OnModuleDestroy {
       return;
     }
     const labels = { domain, group: this.group };
+    if (msg.fields?.redelivered === true) {
+      this.metrics?.consumerRedelivered.inc(labels);
+    }
     const fim = this.metrics?.consumerDuration.startTimer(labels);
     const conta = (result: ConsumerResult): void => {
       fim?.();

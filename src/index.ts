@@ -8,6 +8,7 @@ export {
   UhuraMetrics,
   type ConsumerResult,
   type RpcClientResult,
+  type RpcServerResult,
 } from './metrics';
 export { createMetricsController, DEFAULT_METRICS_PATH } from './metrics.controller';
 export {

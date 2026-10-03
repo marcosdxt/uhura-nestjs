@@ -6,6 +6,7 @@ import {
   Logger,
   type OnApplicationBootstrap,
   type OnModuleDestroy,
+  Optional,
 } from '@nestjs/common';
 import { DiscoveryService, MetadataScanner } from '@nestjs/core';
 import type * as amqp from 'amqplib';
@@ -13,6 +14,7 @@ import type * as amqp from 'amqplib';
 import { UhuraAmqp } from './amqp';
 import type { UhuraModuleOptions } from './config';
 import { UHURA_FUNCTION_METADATA, UHURA_OPTIONS } from './constants';
+import { UhuraMetrics } from './metrics';
 import type { UhuraFunctionOptions } from './decorators/function.decorator';
 import { RpcError, type RpcRequest, type RpcResult, type UhuraRpcContext } from './rpc';
 import { rpcQueueName } from './transport';
@@ -34,6 +36,7 @@ export class UhuraRpcServer implements OnApplicationBootstrap, OnModuleDestroy {
     private readonly scanner: MetadataScanner,
     private readonly amqp: UhuraAmqp,
     @Inject(UHURA_OPTIONS) private readonly options: UhuraModuleOptions,
+    @Optional() private readonly metrics?: UhuraMetrics,
   ) {}
 
   async onApplicationBootstrap(): Promise<void> {
@@ -110,8 +113,12 @@ export class UhuraRpcServer implements OnApplicationBootstrap, OnModuleDestroy {
     }
 
     let result: RpcResult;
+    // Rotulado depois do parse; requisição ilegível conta como `?` / `?`.
+    let labels = { domain: '?', method: '?' };
+    const inicio = process.hrtime.bigint();
     try {
       const request = JSON.parse(msg.content.toString()) as RpcRequest;
+      labels = { domain: String(request.domain ?? '?'), method: String(request.method ?? '?') };
       const handler = methods.get(request.method);
       if (!handler) {
         result = {
@@ -150,6 +157,11 @@ export class UhuraRpcServer implements OnApplicationBootstrap, OnModuleDestroy {
             errorMessage: (err as Error)?.message ?? String(err),
             errorStack: this.options.debug ? (err as Error)?.stack : undefined,
           };
+    }
+
+    if (this.metrics) {
+      this.metrics.rpcServerDuration.observe(labels, Number(process.hrtime.bigint() - inicio) / 1e9);
+      this.metrics.rpcServer.inc({ ...labels, result: result.resCode === 'ok' ? 'ok' : result.resCode === 'error' ? 'error' : 'exception' });
     }
 
     const replyTo = msg.properties.replyTo as string | undefined;

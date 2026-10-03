@@ -126,6 +126,12 @@ service's own metrics):
 | `uhura_rpc_client_total` | counter | `domain`, `method`, `result` = `ok`\|`error`\|`exception`\|`timeout` |
 | `uhura_rpc_client_duration_seconds` | histogram | `domain`, `method` |
 | `uhura_amqp_reconnects_total` | counter | — |
+| `uhura_publish_total` (0.6) | counter | `domain`, `event` — events written by `UhuraService.publish` |
+| `uhura_rpc_server_total` (0.6) | counter | `domain`, `method`, `result` = `ok`\|`error`\|`exception` — requests served by `@UhuraFunction` |
+| `uhura_rpc_server_duration_seconds` (0.6) | histogram | `domain`, `method` |
+| `uhura_consumer_redelivered_total` (0.6) | counter | `domain`, `group` — messages the broker redelivered |
+| `uhura_outbox_pending` (0.6) | gauge | — rows in `uhura_outbox` not yet published by the station (read at scrape time, covers direct `INSERT`s too) |
+| `uhura_outbox_oldest_pending_age_seconds` (0.6) | gauge | — age of the oldest unpublished row; 0 when empty |
 
 plus the process metrics (`collectDefaultMetrics`) in the same registry.
 

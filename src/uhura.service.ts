@@ -2,7 +2,7 @@
 
 import { randomUUID } from 'node:crypto';
 
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
 import type { Pool } from 'pg';
 
 import { UhuraAmqp } from './amqp';
@@ -12,6 +12,7 @@ import { newEnvelope } from './envelope';
 import type { CallOptions } from './rpc-client';
 import { UhuraRpcClient } from './rpc-client';
 import type { RpcResult } from './rpc';
+import { UhuraMetrics } from './metrics';
 import { insertOutbox } from './storage';
 
 /** Opções de publicação. */
@@ -29,6 +30,7 @@ export class UhuraService {
     @Inject(UHURA_OPTIONS) private readonly options: UhuraModuleOptions,
     private readonly rpc: UhuraRpcClient,
     private readonly amqp: UhuraAmqp,
+    @Optional() private readonly metrics?: UhuraMetrics,
   ) {}
 
   /**
@@ -88,6 +90,7 @@ export class UhuraService {
       opts.partition ?? null,
       envelope,
     );
+    this.metrics?.published.inc({ domain, event });
     if (this.options.debug) {
       // eslint-disable-next-line no-console
       console.debug(`[uhura] outbox id=${id} type=${envelope.type}`);
