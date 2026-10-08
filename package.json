@@ -5,7 +5,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/marcosdxt/uhura-nestjs"
+    "url": "git+https://github.com/marcosdxt/uhura-nestjs.git"
   },
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
