@@ -1,230 +1,326 @@
-# @uhura/bus
+# uhura-nestjs
 
-```text
-  _   _ _   _ _   _ ____      _
- | | | | | | | | | |  _ \    / \
- | | | | |_| | | | | |_) |  / _ \
- | |_| |  _  | |_| |  _ <  / ___ \
-  \___/|_| |_|\___/|_| \_\/_/   \_\
-   >> HAILING FREQUENCIES OPEN <<
+NestJS SDK for **Uhura** — a *contract-first* message bus for microservice meshes, built on RabbitMQ + PostgreSQL.
+
+> Package: `@dextro/uhura-nestjs` (private Dextro registry — Verdaccio, `npm.dextrolabs.com.br`). Part of the Uhura project. The full formal specification lives in [`dextro-message-bus/SPEC.md`](../dextro-message-bus/SPEC.md).
+
+## What this package does
+
+Exposes Uhura to NestJS code through **decorators** and a module. Same semantics as the Rust SDK (`uhura-rust`). It covers:
+
+- **Publish** contract events (written to the *outbox* inside the business transaction).
+- **Subscribe** to events (`@UhuraSubscribe`), with per-partition ordering and idempotency (Inbox).
+- **RPC** over messaging (`@UhuraFunction` + `RpcResult<T>`).
+- **CDC** of entities (`@UhuraEntityChange` / `@UhuraEntityNotify`).
+
+## Installation
+
+The package lives in the `@dextro` scope of the Dextro Verdaccio. Point the
+scope at it in the project's `.npmrc` (the `dextro-service` pipeline writes this
+itself, with the in-cluster address):
+
 ```
-
-**Uhura** é um message-bus NestJS sobre RabbitMQ para sistemas de missão crítica: semântica
-tipada de ponta a ponta, persistência forte (quorum queues + publisher confirms), retry em
-dois estágios com parking-lot, ordenação por entidade e envelope **CloudEvents 1.0** —
-agnóstico de domínio e pronto para interoperar com clients em outras linguagens.
-
-> **Status: em especificação — pré-implementação.**
-> [Especificação](./doc/uhura-spec.md) fechada para análise; implementação inicia após os spikes de
-> fundação (SPEC §26). Nada abaixo está publicado ainda.
-
----
-
-## Por que não usar só o `@nestjs/microservices`?
-
-O transport RMQ do Nest usa uma fila única por aplicação com envelope proprietário
-(`{pattern, data}`), sem publisher confirms, sem topic exchange e sem DLQ — inadequado para
-mensageria séria entre dezenas de serviços (análise completa: SPEC §2). O Uhura constrói
-sobre `@golevelup/nestjs-rabbitmq` (o padrão de facto da comunidade) a camada que não existe
-pronta no ecossistema Node: **semântica + contratos + recoverability + governança**.
-
-## Conceitos em 30 segundos
-
-Três semânticas, um client:
-
-| Abstração | Verbo | Consumidores | Resposta | Entrega |
-|---|---|---|---|---|
-| **Event** | `notify` / `publish` | 0..N | não | persistente (at-least-once) |
-| **Command** | `send` | exatamente 1 | não | persistente (at-least-once) |
-| **Query (RPC)** | `request` | 1 | sim | efêmera (at-most-once) |
-
-Endereçamento sempre por **contrato versionado** (`order.collected.v1`) — nunca por nome de
-classe. Toda mensagem viaja como CloudEvent JSON com rastreabilidade
-(`correlationid`/`causationid`/`traceparent`).
-
-## Quickstart
-
-### 1. Instale
+@dextro:registry=https://npm.dextrolabs.com.br/
+```
 
 ```bash
-npm i @uhura/bus @org/bus-contracts   # bus + contratos do SEU mesh
+npm install @dextro/uhura-nestjs
 ```
 
-### 2. Configure o módulo
-
 ```ts
-MessageBusModule.forRootAsync({
-  inject: [ConfigService],
-  useFactory: (cfg: ConfigService): MessageBusOptions => ({
-    serviceName: 'billing-service',
-    connection: { urls: [cfg.get('RABBITMQ_URL')] },
-    reliability: {
-      retry: { immediate: 2, delayedTiers: [10_000, 60_000, 600_000] },
-    },
-  }),
+// app.module.ts
+@Module({
+  imports: [
+    UhuraModule.forRoot({
+      amqpUrl: process.env.UHURA_AMQP_URL,   // amqp:// on a private cluster (v1)
+      postgresUrl: process.env.UHURA_PG_URL, // source of truth (outbox/inbox)
+      mesh: 'acme',
+      // Consumer group = the service name. Optional here when UHURA_GROUP or
+      // SERVICE_NAME is set; required (boot fails) if the service subscribes.
+      group: 'acme-billing',
+      debug: false,
+    }),
+  ],
 })
+export class AppModule {}
 ```
 
-### 3. Declare seu objeto e publique
+## API (overview)
 
 ```ts
-@BusObject('order', { version: 1, partitionKey: 'id' })
-export class OrderSnapshot {
-  id: string;
-  status: string;
-  total: number; // DTO plano — nunca a entity ORM
-}
+// Contract (kept in the contracts repository, included as a submodule)
+@UhuraContract({ domain: 'usuario.info', events: ['started','stopped','removed'], partitionId: 'id' })
+export interface UsuarioInfo { id: string; description: string; date: Date }
+
+// Publish
+await uhura.publish(UsuarioInfo, contract, 'started');
+
+// Subscribe
+@UhuraSubscribe({ domain: 'uhura.acme.usuario.info', events: ['started'] })
+async handle(entity: UsuarioInfo, ctx: UhuraContext) {}
+
+// RPC
+@UhuraFunction({ domain: 'usuario.info', method: 'hydrate' })
+async hydrate(input: HydrateDTO, ctx: UhuraContext): Promise<UsuarioInfo> {}
+const res = await uhura.method(UsuarioInfo, 'hydrate', { id: '42' });
+
+// CDC
+@UhuraEntityChange({ domain: 'usuario.info', events: ['inserted','updated'] })
+async onChange(entity: UsuarioInfo, ctx: UhuraCdcContext) {}
 ```
 
-```ts
-@Injectable()
-export class OrderService {
-  constructor(private readonly bus: MessageBus) {}
+## Consumer groups (0.2)
 
-  async collect(order: OrderEntity) {
-    // ...regra de negócio...
-    const snapshot: OrderSnapshot = { id: order.id, status: 'COLLECTED', total: order.total };
+Every service that subscribes to a domain gets **its own copy** of every event:
 
-    await this.bus.notify(snapshot, 'collected', 'COLLECTED');
-    // → contrato: order.collected.v1 · routing key: order.collected.v1.COLLECTED
-  }
-}
-```
+| Resource | Name |
+|----------|------|
+| Domain exchange (`topic`) | `uhura.<domain>` |
+| Group queue (quorum, DLX, `x-delivery-limit=5`, bound `#`) | `uhura.<domain>.<group>.q` |
+| Group parking (fanout exchange + quorum queue) | `uhura.<domain>.<group>.parking` / `.parking.q` |
+| RPC (point-to-point, no group) | `uhura.<domain>.rpc` |
 
-**Anatomia do `notify(objeto, evento, status?)`** — a tripla é o endereço da mensagem:
+Names and arguments are byte-identical to the Rust driver (`uhura-core`,
+`uhura-transport`); a mismatch would make the broker reject the redeclare.
 
-| Parâmetro | No exemplo | O que define no wire |
+- **Group = service name.** Resolved as `group` option → `UHURA_GROUP` →
+  `SERVICE_NAME` (the `dextro-service` chart already injects the release name).
+  Format `^[a-z0-9][a-z0-9-]{1,62}$` (no dots); `parking` and `rpc` are
+  reserved. A service with `@UhuraSubscribe`/`@UhuraEntityChange` handlers and
+  no group **fails at bootstrap**; an invalid explicit `group` fails in
+  `forRoot`.
+- Replicas of the same service share the group queue (competing consumers).
+- Up to 0.1 there was a single queue per domain (`uhura.<domain>.q`), so
+  different services competed for the same event and each event reached only
+  one of them. CDC (`@UhuraEntityChange`) used the same path and had the same
+  defect.
+- The Inbox dedupes by `envelope.id` in the **service's own database** — one
+  group, one database. Two groups sharing a database would dedupe each other.
+
+### Migrating from 0.1
+
+1. Deploy **every consumer** of the domain with 0.2 (group resolved). During
+   the rollout each event lands in the old queue (still bound) and in every
+   migrated group's queue; the Inbox drops the repeat.
+2. Deploy the stations (`uhura-engine`) built on `uhura-core` 0.2 — the old
+   station re-declares `uhura.<domain>.q` on publish.
+3. Per domain: `uhura queues retire <domain>` (Rust CLI). It republishes what is
+   left in the old queue and old parking to the domain exchange (each group gets
+   a copy; the Inbox dedupes) and deletes the old topology. It refuses while the
+   old queue still has consumers, and puts everything back if no group is bound.
+
+## Metrics and pause control (0.3)
+
+### Prometheus metrics
+
+`UhuraModule.forRoot` now also provides `UhuraMetrics`, a prom-client
+**private registry** (never the global one, so it cannot clash with the
+service's own metrics):
+
+| Metric | Type | Labels |
 |---|---|---|
-| `objeto` | `snapshot` (instância de `OrderSnapshot`) | A classe `@BusObject` dá o **nome** (`order`) e a **versão** (`v1`) do contrato; a instância vira o payload (`data` do CloudEvent) |
-| `evento` | `'collected'` | O que aconteceu — compõe o **contrato**: `order.collected.v1` |
-| `status` | `'COLLECTED'` | Estado resultante — vira o **último segmento da routing key** (`order.collected.v1.COLLECTED`) e é por ele que consumidores filtram. Opcional: omitido vira `_`; transição aceita `{ from: 'PENDING', to: 'COLLECTED' }` |
+| `uhura_consumer_handled_total` | counter | `domain`, `group`, `result` = `ok`\|`duplicate`\|`ignored`\|`error` |
+| `uhura_consumer_handler_duration_seconds` | histogram | `domain`, `group` |
+| `uhura_consumer_paused` | gauge | `domain`, `group` (1 = paused by the station) |
+| `uhura_consumer_lag_seconds` (0.4) | histogram | `domain`, `group` — publish → consume |
+| `uhura_rpc_client_total` | counter | `domain`, `method`, `result` = `ok`\|`error`\|`exception`\|`timeout` |
+| `uhura_rpc_client_duration_seconds` | histogram | `domain`, `method` |
+| `uhura_amqp_reconnects_total` | counter | — |
+| `uhura_publish_total` (0.6) | counter | `domain`, `event` — events written by `UhuraService.publish` |
+| `uhura_rpc_server_total` (0.6) | counter | `domain`, `method`, `result` = `ok`\|`error`\|`exception` — requests served by `@UhuraFunction` |
+| `uhura_rpc_server_duration_seconds` (0.6) | histogram | `domain`, `method` |
+| `uhura_consumer_redelivered_total` (0.6) | counter | `domain`, `group` — messages the broker redelivered |
+| `uhura_outbox_pending` (0.6) | gauge | — rows in `uhura_outbox` not yet published by the station (read at scrape time, covers direct `INSERT`s too) |
+| `uhura_outbox_oldest_pending_age_seconds` (0.6) | gauge | — age of the oldest unpublished row; 0 when empty |
 
-### 4. Escute — a mesma tripla, do outro lado
+plus the process metrics (`collectDefaultMetrics`) in the same registry.
 
-O `@Listen` espelha o `notify` parâmetro a parâmetro: `(Objeto, evento, status?)`. A
-diferença é o papel do `status` — no produtor ele **declara** o estado; no consumidor ele
-**filtra** (e o filtro é seu: cada serviço escolhe seu recorte, resolvido pelo broker, sem
-custo para o produtor):
+By default the module mounts **`GET /metrics`** (`VERSION_NEUTRAL`, so it is
+not turned into `/v1/metrics` by URI versioning). Kong only routes each
+service's API prefixes, so it is reachable inside the cluster only. Options:
 
 ```ts
-@MessageController()
-export class OrderListeners {
-  // espelho exato do notify acima: só transições para COLLECTED
-  @Listen(OrderSnapshot, 'collected', 'COLLECTED')
-  async onCollected(@Payload() o: OrderSnapshot, @Ctx() ctx: MessageContext) {}
+UhuraModule.forRoot({ ..., metrics: false });                    // no endpoint
+UhuraModule.forRoot({ ..., metrics: { path: 'internal/metrics' } });
+UhuraModule.forRoot({ ..., metrics: { defaultMetrics: false } }); // SDK metrics only
+```
 
-  // lista: este serviço só se importa com estados terminais
-  @Listen(OrderSnapshot, 'state-changed', ['CANCELLED', 'EXPIRED'])
-  async onTerminal(@Payload() o: OrderSnapshot) {}
+A service that already has a `/metrics` sets `metrics: false` and merges:
+`Registry.merge([own, uhuraMetrics.registry])`.
 
-  // sem status: todas as variações do evento (binding order.collected.v1.*)
-  @Listen(OrderSnapshot, 'collected')
-  async onAnyCollected(@Payload() o: OrderSnapshot) {}
+### Pausing a consumer group
+
+The station can pause a domain × group from the panel (Ambiente › Uhura):
+replicas stop **taking** messages (`basic.cancel`); the queue keeps receiving
+and nothing is lost. Protocol (`uhura-core` `control`):
+
+- each replica binds an exclusive, auto-delete, server-named queue to the
+  `uhura.control` topic exchange (`#`) and applies
+  `consumer-pause {domain, group, paused}` and
+  `consumer-snapshot {paused: [{domain, group}]}` (full state, every minute);
+- **on boot (and after every reconnect)** the replica asks
+  `uhura.control.rpc` `getPaused {group}` *before* subscribing, so a paused
+  domain is never consumed, not even for an instant. The desired state lives
+  in the DB of the station started with `UHURA_CONTROL_AUTHORITY=true`;
+- if the authority does not answer within `controlTimeoutMs` (3000), the
+  replica consumes everything and logs a warning; the next snapshot fixes it.
+  The request carries `expiration`, so it never piles up in the RPC queue;
+- messages already delivered when the pause arrives finish and are acked.
+
+`control: false` turns it off (0.2 behaviour). `UhuraConsumer.pausedDomains()`
+exposes the current state. 0.2 configs work unchanged.
+
+## Business errors, handler context and consumer lag (0.4)
+
+### `RpcError`
+
+```ts
+import { RpcError, UhuraFunction, type UhuraRpcContext } from '@dextro/uhura-nestjs';
+
+@UhuraFunction({ domain: 'user.rpc', method: 'getUser' })
+async getUser(input: GetUserInput, ctx: UhuraRpcContext) {
+  throw new RpcError('USER_NOT_FOUND', 'Usuário não encontrado.', { detail: 'X' });
 }
 ```
 
-Regra de bolso: **`notify` e `@Listen` casam quando a tripla casa** — mesmo objeto (nome +
-versão), mesmo evento, e status compatível (exato, contido na lista, ou listener sem status).
+The server replies
 
-### 5. RPC e Command tipados
-
-```ts
-// no serviço dono do objeto
-@BusOperation(OrderSnapshot, 'hydrate')
-async hydrate(@Payload() args: { id: string }): Promise<OrderSnapshot> { ... }
-
-// em qualquer serviço
-const order = await bus.request(OrderSnapshot, 'hydrate', { id: 'order-123' });
-
-@BusCommand(OrderSnapshot, 'cancel')
-async cancel(@Payload() args: { id: string; reason: string }) { ... }
-await bus.send(OrderSnapshot, 'cancel', { id, reason });
+```json
+{ "data": null, "resCode": "error", "errorCode": "USER_NOT_FOUND",
+  "errorMessage": "Usuário não encontrado.", "errorStack": { "detail": "X", "code": "USER_NOT_FOUND" } }
 ```
 
-## Confiabilidade (resumo — detalhes na SPEC §8–§10)
+`errorStack.code` is where the Rust driver (`dextrolabs-device`) already puts
+the code; `errorCode` is the field proper (also in `uhura-core`'s `RpcResult`).
+Any other exception is still `resCode: 'exception'` (unexpected failure).
+Detection uses a `Symbol.for` brand, so an `RpcError` from another copy of the
+package still counts.
 
-- **Publicação**: publisher confirms (a Promise resolve no ack do broker), `mandatory`
-  detecta não-roteável, teto de in-flight contra OOM sob flow control.
-- **Consumo**: ack manual; erro → retries imediatos in-process → tiers atrasados (filas TTL:
-  10s/1m/10m) → **DLQ com diagnóstico**. Nunca loop infinito, nunca mensagem descartada.
-- **Ordenação por entidade**: `partitionKey` (consistent-hash encadeado) ou
-  `singleActiveConsumer` — com os limites documentados honestamente (SPEC §18.1).
-- **Idempotência**: dedup por `CloudEvent.id` (adapter Redis), marcação atômica, fail-closed.
-- **Evolução de contratos**: tolerant reader; aditivo = mesma versão; breaking = `vN+1` com
-  dual-publish e aposentadoria guiada por telemetria.
+On the client, `UhuraService.call` fills `errorCode` whenever a code exists:
+the field (0.4+ servers), `errorStack.code` (Rust driver) or the legacy
+`"CODE: message"` prefix (NestJS servers up to 0.3, which threw plain errors).
+`errorMessage` is never rewritten. Local failures get codes too: `TIMEOUT`
+(counted as `result="timeout"`) and `DISCONNECTED`. `parseErrorCode(result)` is
+exported for results obtained elsewhere.
 
-## Observabilidade
+### Handler context (idempotency)
 
-Métricas prontas para exportar (`uhura_published_total`, `uhura_consumed_total`,
-`uhura_retries_total`, profundidade/idade de fila…), health indicator compatível com
-Terminus, graceful shutdown com drain de in-flight e propagação W3C `traceparent` →
-OpenTelemetry. SPEC §19.
+- `@UhuraFunction` handlers get `(data, ctx: UhuraRpcContext)`:
+  `{ id, domain, method, correlationId, redelivered }`. `id` is the
+  `RpcRequest.id` — one per call — so the server can dedupe retries.
+- `@UhuraSubscribe` / `@UhuraEntityChange` handlers get
+  `(data, ctx: UhuraEventContext)`. `ctx` **is the envelope** (as in 0.3, so
+  `ctx.id`, `ctx.type`, `ctx.time`… keep working) plus `domain`, `event`,
+  `group`, `redelivered` and `envelope` (the raw envelope). `ctx.id` is the
+  envelope id, the idempotency key.
 
-## Testando sua aplicação
+### `uhura_consumer_lag_seconds`
 
-`@uhura/bus/testing` traz um bus **in-memory com a mesma API** — seus handlers são testados
-sem broker, com entrega síncrona e helpers de asserção (`expectPublished`, `givenEvent`).
-Comportamento de broker (confirms, retry, partição) é responsabilidade da suíte do
-componente, não da sua.
+Histogram `{domain, group}` = now − envelope `time` (CloudEvents), observed when
+the handlers start (after the Inbox check). It covers outbox → station → broker →
+queue wait (including pause and retries); buckets go up to 1 h. Envelopes
+without a valid `time` are not observed; negative values (publisher clock ahead)
+count as 0. p95 for the panel:
 
-## Ecossistema
+```
+histogram_quantile(0.95, sum by (le) (rate(uhura_consumer_lag_seconds_bucket[5m])))
+```
 
-O projeto entrega **dois artefatos**; o repo de contratos pertence ao **mesh** adotante
-(o projeto propõe a estrutura via `uhura contracts init` e a mantém via CLI):
+## Guarantees
 
-| Artefato | Dono | Distribuição |
-|---|---|---|
-| `@uhura/bus` — componente NestJS | projeto (`uhura-bus`, este) | npm (GHCR) |
-| `uhura` — CLI de operação/diagnóstico (Rust) | projeto (`uhura-cli`) | binário (GitHub Releases) |
-| Repo de contratos do mesh (ex.: `@org/bus-contracts`) | organização adotante | npm da organização |
+- **CloudEvents 1.0** envelope + **W3C/OpenTelemetry** *trace context* propagated across every hop.
+- **At-least-once delivery + idempotent Inbox = effectively-once** (not *exactly-once*).
+  The Inbox is written **after** the handler succeeds, so a failing handler is
+  retried and eventually parked instead of being swallowed as a duplicate. Two
+  concurrent deliveries of the same envelope can therefore both reach a handler
+  before either records it — the Inbox dedupes what was **done**, it is not a
+  lock.
+- Per-partition ordering: the routing key is the `partitionkey`. The spec's
+  *consistent-hash exchange* + *Single Active Consumer* are not implemented yet
+  in either SDK; when they land they will be per group (shards inside the group).
 
-**O fluxo da frota:** cada serviço declara contratos por decorators → o build emite
-manifesto + JSON Schemas em `.uhura/` (commitado, frescor verificado no CI) → `uhura bump`
-coleta a frota e abre PR no repo de contratos do mesh → o CI de lá valida compatibilidade,
-regenera tipos e o catálogo **`BUS.md`** (quem publica/consome o quê, grafo, órfãos) e
-publica o pacote → consumidores atualizam por dependência versionada. Documentação e tipos
-**extraídos, nunca escritos à mão**. Fluxo completo: SPEC §27.
+## Status
 
-## CLI `uhura` (Rust)
+**Functional MVP** — events and RPC, **verified in bidirectional interop with the
+Rust engine** (`uhura-cli`), sharing the same outbox/inbox in Postgres and the same
+RabbitMQ topology:
+
+- `UhuraService.publish(domain, event, data, {partition})` — writes to the outbox.
+- `@UhuraSubscribe({domain, events})` — consumer on the service's group queue,
+  with idempotency (Inbox), ack/nack→group parking.
+- `@UhuraFunction({domain, method})` — RPC endpoint (server).
+- `UhuraService.call(domain, method, args)` — RPC client → `RpcResult<T>`.
+- `@UhuraEntityChange({domain, events})` — CDC handler (`inserted`/`updated`/
+  `removed` events generated by triggers via `uhura db sync`).
+
+Verified interop: NestJS↔Rust events (both directions) and NestJS↔Rust RPC
+(Rust client `uhura call` → `@UhuraFunction` server; NestJS client → NestJS
+server).
+
+Not yet implemented: domain mesh-prefixing. Contract codegen comes from the CLI
+(`uhura sync`).
+
+## Layout
+
+```
+src/
+  envelope.ts     # CloudEvents 1.0 (names identical to the Rust SDK)
+  transport.ts    # RabbitMQ topology (mirrors the Rust driver)
+  storage.ts      # outbox/inbox (same tables/columns)
+  uhura.service.ts# publish() -> outbox + call() RPC
+  consumer.ts     # @UhuraSubscribe discovery + idempotent consumption
+  rpc-server.ts   # @UhuraFunction discovery + RPC responses
+  rpc-client.ts   # RPC client (direct reply-to + correlationId)
+  rpc.ts          # RpcResult, RpcError, UhuraRpcContext
+  amqp.ts         # shared AMQP connection
+  control.ts      # pause control (uhura.control) + getPaused on boot
+  metrics.ts      # UhuraMetrics (prom-client, private registry)
+  metrics.controller.ts # GET /metrics
+  uhura.module.ts # UhuraModule.forRoot
+  decorators/     # @UhuraContract, @UhuraSubscribe, @UhuraFunction
+```
+
+## Development
 
 ```bash
-uhura doctor                                    # pré-requisitos do broker (plugins, permissões)
-uhura listen order.collected.v1 --status COLLECTED   # observar sem interferir (tap)
-uhura publish order collected --status COLLECTED --data @order.json
-uhura request order hydrate --data '{"id":"order-123"}'
-uhura topology diff                             # drift spec × broker
-uhura dlq ls billing-service.billing.dead       # inspeção e replay de DLQ
-uhura docs --out BUS.md                         # catálogo da frota
-uhura bump --check                              # auditoria de drift dos contratos
+npm install
+npm run typecheck
+npm run build
+npm test        # node:test against dist, one file at a time (no broker needed)
+
+# interop with a real station (skipped without the variables):
+UHURA_IT_AMQP_URL=amqp://... UHURA_IT_STATION_URL=http://127.0.0.1:18080 \
+UHURA_IT_ADMIN_TOKEN=... UHURA_IT_PG_URL=postgres://... \
+  node --test --test-concurrency=1 test/integracao.test.js
 ```
 
-Binário único, fala apenas o protocolo (CloudEvents + topologia AMQP) — é também a prova de
-conformidade poliglota do barramento. SPEC §19.6.
+## Publishing
 
-## Roadmap
+Publishing is done by **Jenkins** (`dextro-pipeline`, `dextroLib(stack: 'node')`
+in the `Jenkinsfile`), never from a workstation. On `main`, after lint/build/test,
+the pipeline publishes `@dextro/uhura-nestjs` to the Verdaccio **if the version in
+`package.json` is not there yet** — bumping `version` is the release request; a
+repeated version is a no-op with a warning. Prereleases (`x.y.z-rc.N`) go out
+under the `next` dist-tag.
 
-- [ ] **Spikes de fundação** (SPEC §26): basic.return no golevelup, direct reply-to,
-      round-trip CloudEvents, esqueleto Rust da CLI.
-- [ ] **Fase 0:** scaffold, envelope, registry de contratos, decorators, client, transport.
-- [ ] **Fase 1:** integração RabbitMQ completa (quorum, retry 2 estágios, RPC), métricas, health.
-- [ ] **Fase 2:** idempotência (Redis), OTel, `@uhura/bus/testing`, bench suite,
-      JSON Schema + manifesto + AsyncAPI; CLI v0 em paralelo.
-- [ ] **Fase 3:** publicação 0.1.0, piloto, CLI v1 (`dlq`, `docs`, `bump`), game day, SLOs.
-- [ ] **Fase 4 (pós-0.2):** CDC (Captured Outbox) Postgres/MSSQL — spec própria; crate `uhura-bus-rs`.
+The package was `@marcosaquino/uhura-nestjs` on npmjs up to 0.1.0; from 0.2.0 on
+it is only `@dextro/uhura-nestjs`.
 
-## Desenvolvimento
+## Caller identity in RPC (0.5)
 
-- Node 22, NestJS 11, TypeScript 5.x. Testes: `jest` (unit) + Testcontainers
-  `rabbitmq:4-management` (integração).
-- **Política de qualidade** (SPEC §14.5): diff coverage 100% em todo PR; gate global ≥95%
-  com exclusões auditáveis; mutation testing nos módulos core; golden files de conformidade
-  em `conformance/` compartilhados com o CI da CLI.
+Every RPC request carries the AMQP `user-id` property set to the user of the
+client's connection URL. RabbitMQ **rejects** a publish whose `user-id` differs
+from the authenticated connection user, so on the server side
+`ctx.callerUser` is an identity guaranteed by the broker — unlike the `ctx`
+object inside the request data, which is whatever the caller declares.
 
-## 📖 Documentação
+```ts
+@UhuraFunction({ domain: 'user.rpc', method: 'getUser' })
+async getUser(input: GetUserInput, ctx: UhuraRpcContext) {
+  // ctx.callerUser === 'dextrolabs-terminal' when the terminal connects with
+  // its own RabbitMQ user; undefined for clients older than 0.5.
+}
+```
 
-A [Especificação (doc/uhura-spec.md)](./doc/uhura-spec.md) é o documento canônico — inclui fundamentos teóricos,
-análise build-vs-buy, invariantes de interoperabilidade, histórico de design review e o
-critério de prontidão pré-implementação.
-
----
-*Developed with focus on reliability, scalability, and elegance.*
+It only identifies services if each service connects with its **own**
+RabbitMQ user.

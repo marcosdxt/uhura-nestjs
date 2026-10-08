@@ -1,0 +1,10 @@
+node_modules/
+target/
+dist/
+.env
+*.log
+
+# npm publish token — nunca commitar
+.npm_secret
+pin.txt
+*.tgz
