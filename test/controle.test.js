@@ -4,6 +4,7 @@
 // station autoridade quando alguém manda o `getPaused` para `uhura.control.rpc`.
 
 const { test } = require('node:test');
+const { poolFalso } = require('./pg-falso');
 const assert = require('node:assert');
 
 require('reflect-metadata');
@@ -201,14 +202,7 @@ test('control: false nao liga o controle (comportamento da 0.2)', async () => {
 test('metricas do consumidor: ok, ignorado, duplicado e erro', async () => {
   const canal = canalFalso(() => undefined);
   const metrics = new uhura.UhuraMetrics({ metrics: { defaultMetrics: false } });
-  let processado = false;
-  const pool = {
-    query: async (sql) => {
-      if (sql.startsWith('SELECT')) return { rowCount: processado ? 1 : 0 };
-      processado = true;
-      return { rowCount: 1 };
-    },
-  };
+  const pool = poolFalso();
   const c = montar({ amqpUrl: '', postgresUrl: '', group: GRUPO, control: false }, canal, metrics, pool);
   await c.onApplicationBootstrap();
   const entrega = (type, id) => ({

@@ -1,4 +1,6 @@
 //! Envelope CloudEvents 1.0 + extensões Uhura.
+
+import type { PoolClient } from 'pg';
 //
 // Os nomes de campo seguem EXATAMENTE o SDK Rust (uhura-core) para interop:
 // o JSON gravado aqui é desserializado lá e vice-versa.
@@ -59,6 +61,13 @@ export interface UhuraEventContext extends Envelope {
   redelivered: boolean;
   /** O envelope como chegou, sem os campos de contexto. */
   envelope: Envelope;
+  /**
+   * A transação do inbox. O que o handler grava por ela é confirmado junto com
+   * a marca de processado, e desfeito junto se ele falhar. Para publicar de
+   * dentro do handler, use `uhura.publish(..., { tx: ctx.tx })`: publicar pelo
+   * pool com todas as conexões presas em handlers esgotaria o pool.
+   */
+  tx: PoolClient;
 }
 
 /** Cria um envelope mínimo válido (CloudEvents 1.0). */

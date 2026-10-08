@@ -3,6 +3,7 @@
 // Sem broker: canais falsos guardam os callbacks de consumo e as respostas.
 
 const { test } = require('node:test');
+const { poolFalso } = require('./pg-falso');
 const assert = require('node:assert');
 
 require('reflect-metadata');
@@ -196,7 +197,7 @@ const consumidor = async (handler, metrics) => {
     }
   }
   decorar(Assinante, 'onRecorded', uhura.UhuraSubscribe({ domain: 'audit', events: ['recorded'] }));
-  const pool = { query: async () => ({ rowCount: 0 }) };
+  const pool = poolFalso();
   const amqp = { onReconnect: () => {}, createChannel: async () => canal };
   const c = new UhuraConsumer(
     { getProviders: () => [{ instance: new Assinante() }] },

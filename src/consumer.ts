@@ -19,7 +19,7 @@ import { PauseControl } from './control';
 import type { UhuraSubscribeOptions } from './decorators/subscribe.decorator';
 import type { Envelope, UhuraEventContext } from './envelope';
 import { type ConsumerResult, UhuraMetrics } from './metrics';
-import { markProcessed, wasProcessed } from './storage';
+import { claimInbox } from './storage';
 import { ensureGroupTopology, queueName, resolveGroup } from './transport';
 
 interface Handler {
@@ -239,35 +239,49 @@ export class UhuraConsumer implements OnApplicationBootstrap, OnModuleDestroy {
       }
 
       // Idempotência: dedup por envelope.id no inbox do banco DESTE serviço
-      // (um grupo, um banco), consultando ANTES e marcando
-      // DEPOIS. Marcar antes de o handler cumprir transformava a primeira falha
-      // em perda: o nack reentregava, a linha do inbox já existia, e a
-      // reentrega era descartada como duplicata — sem retry e sem parking, que
-      // é o contrário do que o inbox existe para garantir.
-      if (await wasProcessed(this.pool, envelope.id)) {
-        if (this.options.debug) {
-          this.logger.debug(`duplicado ignorado ${envelope.id}`);
+      // (um grupo, um banco), na MESMA transação dos handlers. O ack só sai
+      // depois do COMMIT; se o handler falha, o ROLLBACK desfaz a linha do
+      // inbox e a reentrega processa de novo, até o parking.
+      const tx = await this.pool.connect();
+      let aberta = false;
+      try {
+        await tx.query('BEGIN');
+        aberta = true;
+        if (!(await claimInbox(tx, envelope.id, domain, envelope.partitionkey ?? null))) {
+          await tx.query('ROLLBACK');
+          aberta = false;
+          if (this.options.debug) {
+            this.logger.debug(`duplicado ignorado ${envelope.id}`);
+          }
+          channel.ack(msg);
+          conta('duplicate');
+          return;
         }
-        channel.ack(msg);
-        conta('duplicate');
-        return;
-      }
 
-      this.observarAtraso(labels, envelope);
-      const ctx: UhuraEventContext = {
-        ...envelope,
-        domain,
-        event,
-        group: this.group,
-        redelivered: msg.fields?.redelivered === true,
-        envelope,
-      };
-      for (const handler of matched) {
-        await handler.instance[handler.methodName](envelope.data, ctx);
-      }
+        this.observarAtraso(labels, envelope);
+        const ctx: UhuraEventContext = {
+          ...envelope,
+          domain,
+          event,
+          group: this.group,
+          redelivered: msg.fields?.redelivered === true,
+          envelope,
+          tx,
+        };
+        for (const handler of matched) {
+          await handler.instance[handler.methodName](envelope.data, ctx);
+        }
 
-      // Só agora: o inbox registra o que foi feito, não o que se pretendia.
-      await markProcessed(this.pool, envelope.id, domain, envelope.partitionkey ?? null);
+        await tx.query('COMMIT');
+        aberta = false;
+      } catch (err) {
+        if (aberta) {
+          await tx.query('ROLLBACK').catch(() => undefined);
+        }
+        throw err;
+      } finally {
+        tx.release();
+      }
       channel.ack(msg);
       conta('ok');
     } catch (err) {

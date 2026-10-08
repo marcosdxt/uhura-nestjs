@@ -1,12 +1,12 @@
 //! Acesso ao outbox/inbox no PostgreSQL — mesmas tabelas/colunas do SDK Rust.
 
-import type { Pool } from 'pg';
+import type { Pool, PoolClient } from 'pg';
 
 import type { Envelope } from './envelope';
 
 /** Insere um evento no `uhura_outbox` e devolve o id gerado. */
 export async function insertOutbox(
-  pool: Pool,
+  pool: Pool | PoolClient,
   domain: string,
   event: string,
   partitionkey: string | null,
@@ -21,32 +21,22 @@ export async function insertOutbox(
 }
 
 /**
- * O envelope já foi processado com sucesso antes?
+ * Reivindica o envelope no `uhura_inbox` dentro da transação do consumidor.
+ * Retorna `true` se é novo e `false` se já foi processado.
  *
- * Consulta e marcação são separadas de propósito: marcar antes de o handler
- * cumprir transforma a primeira falha em perda — o nack reentrega, a linha do
- * inbox já existe, e a reentrega é descartada como duplicata, sem retry e sem
- * parking. Ver `markProcessed`.
+ * Roda na MESMA transação dos handlers: a linha só se torna visível no COMMIT,
+ * junto com o que o handler gravou por `ctx.tx`. Se o handler falha, o
+ * ROLLBACK desfaz a reivindicação e a reentrega processa de novo. Uma
+ * reentrega concorrente do mesmo envelope espera no índice único e, depois do
+ * COMMIT da primeira, cai no `DO NOTHING`.
  */
-export async function wasProcessed(pool: Pool, envelopeId: string): Promise<boolean> {
-  const res = await pool.query('SELECT 1 FROM uhura_inbox WHERE envelope_id = $1', [envelopeId]);
-  return (res.rowCount ?? 0) > 0;
-}
-
-/**
- * Marca o envelope como processado no `uhura_inbox`.
- * Retorna `true` se é novo e `false` se outro consumidor chegou antes.
- *
- * Chamado DEPOIS de o handler cumprir: o inbox registra o que já foi feito, e
- * não o que se pretende fazer.
- */
-export async function markProcessed(
-  pool: Pool,
+export async function claimInbox(
+  tx: PoolClient,
   envelopeId: string,
   domain: string,
   partitionkey: string | null,
 ): Promise<boolean> {
-  const res = await pool.query(
+  const res = await tx.query(
     'INSERT INTO uhura_inbox (envelope_id, domain, partitionkey) ' +
       'VALUES ($1, $2, $3) ON CONFLICT (envelope_id) DO NOTHING',
     [envelopeId, domain, partitionkey],

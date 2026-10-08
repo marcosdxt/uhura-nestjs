@@ -3,6 +3,7 @@
 // Sem broker e sem banco: canais e pool falsos.
 
 const { test } = require('node:test');
+const { poolFalso } = require('./pg-falso');
 const assert = require('node:assert');
 
 require('reflect-metadata');
@@ -104,7 +105,7 @@ test('uhura_consumer_redelivered_total conta só a reentrega', async () => {
     async on() {}
   }
   decorar(Assinante, 'on', uhura.UhuraSubscribe({ domain: 'user-account.client', events: ['upserted'] }));
-  const pool = { query: async () => ({ rowCount: 0, rows: [] }) };
+  const pool = poolFalso();
   const amqp = { onReconnect: () => {}, createChannel: async () => canal };
   const c = new UhuraConsumer(
     { getProviders: () => [{ instance: new Assinante() }] },

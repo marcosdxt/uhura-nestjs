@@ -3,7 +3,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { Inject, Injectable, Optional } from '@nestjs/common';
-import type { Pool } from 'pg';
+import type { Pool, PoolClient } from 'pg';
 
 import { UhuraAmqp } from './amqp';
 import type { UhuraModuleOptions } from './config';
@@ -21,6 +21,11 @@ export interface PublishOptions {
   partition?: string;
   /** Origem do evento (`source`). Default: `uhura-nestjs`. */
   source?: string;
+  /**
+   * Transação onde gravar o outbox (por exemplo `ctx.tx` de um handler). Sem
+   * ela, a gravação usa o pool do SDK, fora de qualquer transação do chamador.
+   */
+  tx?: PoolClient;
 }
 
 @Injectable()
@@ -84,7 +89,7 @@ export class UhuraService {
     envelope.data = data;
 
     const id = await insertOutbox(
-      this.pool,
+      opts.tx ?? this.pool,
       domain,
       event,
       opts.partition ?? null,
