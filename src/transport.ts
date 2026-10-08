@@ -55,8 +55,8 @@ export function validateGroup(group: string): string {
 }
 
 /**
- * Resolve o grupo de consumo: opção explícita → `UHURA_GROUP` → `SERVICE_NAME`
- * (o chart `dextro-service` já injeta o nome do release nele). Mesma ordem do
+ * Resolve o grupo de consumo: opção explícita → `UHURA_GROUP` → `SERVICE_NAME`.
+ * Mesma ordem do
  * `ConsumerGroup::resolve` do Rust.
  *
  * Sem nenhum dos três, lança: adivinhar (hostname, pod) faria cada réplica

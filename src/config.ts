@@ -11,8 +11,8 @@ export interface UhuraModuleOptions {
    * (`uhura.<domínio>.<grupo>.q`) e recebe todos os eventos dele; as réplicas
    * do mesmo serviço dividem a fila do grupo.
    *
-   * Default: `UHURA_GROUP`, depois `SERVICE_NAME` (injetado pelo chart
-   * `dextro-service`). Obrigatório para quem assina (`@UhuraSubscribe`/
+   * Default: `UHURA_GROUP`, depois `SERVICE_NAME` (os charts ews não injetam
+   * nenhum dos dois). Obrigatório para quem assina (`@UhuraSubscribe`/
    * `@UhuraEntityChange`): sem ele, o bootstrap falha. Formato
    * `^[a-z0-9][a-z0-9-]{1,62}$`.
    */

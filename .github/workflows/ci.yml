@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [main, devel]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+
+  publish:
+    needs: test
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      # Publicar e pedido de release: so sai quando a versao do package.json
+      # ainda nao esta no Verdaccio. Versao repetida nao e erro.
+      - name: Publica no Verdaccio se a versao for nova
+        env:
+          VERDACCIO_TOKEN: ${{ secrets.VERDACCIO_TOKEN }}
+        run: |
+          echo "//verdaccio.modulocker.app.br/:_authToken=${VERDACCIO_TOKEN}" > .npmrc.ci
+          NAME=$(node -p "require('./package.json').name")
+          VERSION=$(node -p "require('./package.json').version")
+          if npm view "${NAME}@${VERSION}" version --registry https://verdaccio.modulocker.app.br/ --userconfig .npmrc.ci >/dev/null 2>&1; then
+            echo "::warning::${NAME}@${VERSION} ja publicado; nada a fazer"
+            exit 0
+          fi
+          TAG=latest
+          case "$VERSION" in *-*) TAG=next ;; esac
+          npm publish --tag "$TAG" --registry https://verdaccio.modulocker.app.br/ --userconfig .npmrc.ci

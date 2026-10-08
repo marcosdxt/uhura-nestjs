@@ -8,3 +8,4 @@ dist/
 .npm_secret
 pin.txt
 *.tgz
+.npmrc.ci

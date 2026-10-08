@@ -2,7 +2,7 @@
 
 NestJS SDK for **Uhura** — a *contract-first* message bus for microservice meshes, built on RabbitMQ + PostgreSQL.
 
-> Package: `@dextro/uhura-nestjs` (private Dextro registry — Verdaccio, `npm.dextrolabs.com.br`). Part of the Uhura project. The full formal specification lives in [`dextro-message-bus/SPEC.md`](../dextro-message-bus/SPEC.md).
+> Package: `@modulocker/uhura-nestjs` (Modulocker internal Verdaccio, `verdaccio.modulocker.app.br`). Part of the Uhura project; the original design notes live in [`doc/uhura-spec.md`](./doc/uhura-spec.md). Brought from `Dextro-Labs/uhura-nestjs` 0.6 (`5ef3868`) plus the transactional Inbox (0.7).
 
 ## What this package does
 
@@ -15,16 +15,16 @@ Exposes Uhura to NestJS code through **decorators** and a module. Same semantics
 
 ## Installation
 
-The package lives in the `@dextro` scope of the Dextro Verdaccio. Point the
-scope at it in the project's `.npmrc` (the `dextro-service` pipeline writes this
-itself, with the in-cluster address):
+The package lives in the `@modulocker` scope of the Modulocker Verdaccio. Point
+the scope at it in the project's `.npmrc` (the `useVerdaccio` option of
+`template-node-ci` does the same in the pipeline):
 
 ```
-@dextro:registry=https://npm.dextrolabs.com.br/
+@modulocker:registry=https://verdaccio.modulocker.app.br/
 ```
 
 ```bash
-npm install @dextro/uhura-nestjs
+npm install @modulocker/uhura-nestjs
 ```
 
 ```ts
@@ -84,7 +84,8 @@ Names and arguments are byte-identical to the Rust driver (`uhura-core`,
 `uhura-transport`); a mismatch would make the broker reject the redeclare.
 
 - **Group = service name.** Resolved as `group` option → `UHURA_GROUP` →
-  `SERVICE_NAME` (the `dextro-service` chart already injects the release name).
+  `SERVICE_NAME`. The ews charts do not inject either: set `UHURA_GROUP` (or
+  pass `group`) with the service name.
   Format `^[a-z0-9][a-z0-9-]{1,62}$` (no dots); `parking` and `rpc` are
   reserved. A service with `@UhuraSubscribe`/`@UhuraEntityChange` handlers and
   no group **fails at bootstrap**; an invalid explicit `group` fails in
@@ -175,7 +176,7 @@ exposes the current state. 0.2 configs work unchanged.
 ### `RpcError`
 
 ```ts
-import { RpcError, UhuraFunction, type UhuraRpcContext } from '@dextro/uhura-nestjs';
+import { RpcError, UhuraFunction, type UhuraRpcContext } from '@modulocker/uhura-nestjs';
 
 @UhuraFunction({ domain: 'user.rpc', method: 'getUser' })
 async getUser(input: GetUserInput, ctx: UhuraRpcContext) {
@@ -211,8 +212,9 @@ exported for results obtained elsewhere.
 - `@UhuraSubscribe` / `@UhuraEntityChange` handlers get
   `(data, ctx: UhuraEventContext)`. `ctx` **is the envelope** (as in 0.3, so
   `ctx.id`, `ctx.type`, `ctx.time`… keep working) plus `domain`, `event`,
-  `group`, `redelivered` and `envelope` (the raw envelope). `ctx.id` is the
-  envelope id, the idempotency key.
+  `group`, `redelivered`, `envelope` (the raw envelope) and `tx` (0.7, the
+  Inbox transaction — see Guarantees). `ctx.id` is the envelope id, the
+  idempotency key.
 
 ### `uhura_consumer_lag_seconds`
 
@@ -229,12 +231,20 @@ histogram_quantile(0.95, sum by (le) (rate(uhura_consumer_lag_seconds_bucket[5m]
 ## Guarantees
 
 - **CloudEvents 1.0** envelope + **W3C/OpenTelemetry** *trace context* propagated across every hop.
-- **At-least-once delivery + idempotent Inbox = effectively-once** (not *exactly-once*).
-  The Inbox is written **after** the handler succeeds, so a failing handler is
-  retried and eventually parked instead of being swallowed as a duplicate. Two
-  concurrent deliveries of the same envelope can therefore both reach a handler
-  before either records it — the Inbox dedupes what was **done**, it is not a
-  lock.
+- **At-least-once delivery + transactional Inbox = effectively-once** (0.7).
+  Each delivery runs `BEGIN` → Inbox claim (`INSERT … ON CONFLICT DO NOTHING`)
+  → handlers → `COMMIT` → ack. A failing handler rolls the claim back and is
+  nacked with requeue, so it is retried and eventually parked instead of being
+  swallowed as a duplicate. A concurrent delivery of the same envelope waits on
+  the Inbox unique index and becomes a duplicate after the first commits.
+- What the handler writes through `ctx.tx` commits **atomically** with the
+  Inbox mark. Writes through another connection (a TypeORM `DataSource`, for
+  example) do not: if the process dies between them and the `COMMIT`, the
+  redelivery runs the handler again, so those writes must be idempotent (a
+  unique key on the envelope id does it).
+- Inside a handler, publish with `uhura.publish(domain, event, data, { tx: ctx.tx })`:
+  the event then leaves only if the handler commits, and the call does not take
+  a second connection from the SDK pool (every in-flight delivery holds one).
 - Per-partition ordering: the routing key is the `partitionkey`. The spec's
   *consistent-hash exchange* + *Single Active Consumer* are not implemented yet
   in either SDK; when they land they will be per group (shards inside the group).
@@ -296,15 +306,20 @@ UHURA_IT_ADMIN_TOKEN=... UHURA_IT_PG_URL=postgres://... \
 
 ## Publishing
 
-Publishing is done by **Jenkins** (`dextro-pipeline`, `dextroLib(stack: 'node')`
-in the `Jenkinsfile`), never from a workstation. On `main`, after lint/build/test,
-the pipeline publishes `@dextro/uhura-nestjs` to the Verdaccio **if the version in
-`package.json` is not there yet** — bumping `version` is the release request; a
-repeated version is a no-op with a warning. Prereleases (`x.y.z-rc.N`) go out
-under the `next` dist-tag.
+Publishing is done by **GitHub Actions** (`.github/workflows/ci.yml`). Every
+push and PR runs typecheck, build and tests. On `main` the workflow publishes
+`@modulocker/uhura-nestjs` to the Verdaccio **if the version in `package.json`
+is not there yet** — bumping `version` is the release request; a repeated
+version is a no-op. Prereleases (`x.y.z-rc.N`) go out under the `next`
+dist-tag. The token of the `publisher` user goes in the repository secret
+`VERDACCIO_TOKEN`.
 
-The package was `@marcosaquino/uhura-nestjs` on npmjs up to 0.1.0; from 0.2.0 on
-it is only `@dextro/uhura-nestjs`.
+`scripts/publish.sh` publishes the same thing from a workstation, with the token
+in `.npm_secret` (git-ignored).
+
+Package history: `@marcosaquino/uhura-nestjs` on npmjs (0.1.0),
+`@modulocker/uhura-nestjs` 0.1.0 on the Verdaccio, `@dextro/uhura-nestjs`
+0.2–0.6 at Dextro, and `@modulocker/uhura-nestjs` again from 0.7.0.
 
 ## Caller identity in RPC (0.5)
 
@@ -317,7 +332,7 @@ object inside the request data, which is whatever the caller declares.
 ```ts
 @UhuraFunction({ domain: 'user.rpc', method: 'getUser' })
 async getUser(input: GetUserInput, ctx: UhuraRpcContext) {
-  // ctx.callerUser === 'dextrolabs-terminal' when the terminal connects with
+  // ctx.callerUser === 'ews003' when the terminal connects with
   // its own RabbitMQ user; undefined for clients older than 0.5.
 }
 ```
