@@ -2,13 +2,13 @@
 
 import { type DynamicModule, Module, type Provider } from '@nestjs/common';
 import { DiscoveryModule } from '@nestjs/core';
-import { Pool } from 'pg';
 
 import { UhuraAmqp } from './amqp';
 import type { UhuraModuleOptions } from './config';
 import { UHURA_OPTIONS, UHURA_PG } from './constants';
 import { UhuraConsumer } from './consumer';
 import { UhuraMetrics } from './metrics';
+import { createUhuraPool, UhuraPgLifecycle } from './pg-pool';
 import { createMetricsController, DEFAULT_METRICS_PATH } from './metrics.controller';
 import { UhuraRpcClient } from './rpc-client';
 import { UhuraRpcServer } from './rpc-server';
@@ -36,7 +36,7 @@ export class UhuraModule {
     };
     const poolProvider: Provider = {
       provide: UHURA_PG,
-      useFactory: (): Pool => new Pool({ connectionString: options.postgresUrl }),
+      useFactory: () => createUhuraPool(options.postgresUrl),
     };
 
     const controllers =
@@ -52,6 +52,7 @@ export class UhuraModule {
       providers: [
         optionsProvider,
         poolProvider,
+        UhuraPgLifecycle,
         UhuraMetrics,
         UhuraAmqp,
         UhuraRpcClient,

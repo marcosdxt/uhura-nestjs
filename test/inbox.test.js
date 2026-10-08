@@ -127,3 +127,12 @@ test('publish com tx grava o outbox na transação dada, e não no pool', async 
   assert.strictEqual(await svc.publish('notification.inapp', 'requested', {}), '1');
   assert.strictEqual(noPool.length, 1);
 });
+
+test('pool do SDK: erro de conexão ociosa não derruba o processo, e o shutdown fecha o pool', async () => {
+  const { createUhuraPool, UhuraPgLifecycle } = require('../dist/pg-pool');
+  const pool = createUhuraPool('postgres://u:p@127.0.0.1:1/db');
+  // Sem listener, este emit lançaria "Unhandled 'error' event".
+  pool.emit('error', new Error('terminating connection due to administrator command'));
+  await new UhuraPgLifecycle(pool).onApplicationShutdown();
+  assert.strictEqual(pool.ending, true);
+});
