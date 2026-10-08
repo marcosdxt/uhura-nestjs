@@ -298,6 +298,11 @@ npm run typecheck
 npm run build
 npm test        # node:test against dist, one file at a time (no broker needed)
 
+# transactional Inbox against real Postgres + RabbitMQ, no station needed
+# (skipped without the variables):
+UHURA_IT_AMQP_URL=amqp://... UHURA_IT_PG_URL=postgres://... \
+  node --test --test-concurrency=1 test/inbox-integracao.test.js
+
 # interop with a real station (skipped without the variables):
 UHURA_IT_AMQP_URL=amqp://... UHURA_IT_STATION_URL=http://127.0.0.1:18080 \
 UHURA_IT_ADMIN_TOKEN=... UHURA_IT_PG_URL=postgres://... \
